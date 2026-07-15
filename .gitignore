@@ -1,0 +1,6 @@
+node_modules/
+*.log
+.DS_Store
+
+# Scratch output from manually testing the CLI locally
+/.tmp-test-*

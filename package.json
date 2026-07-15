@@ -1,0 +1,56 @@
+{
+  "name": "@ChamathDilshanC/create-stack",
+  "version": "1.0.0",
+  "description": "Universal, interactive CLI scaffolder for React, Vue, Angular, and Vanilla projects — with optional TypeScript, Tailwind CSS, ESLint, and Prettier.",
+  "type": "module",
+  "license": "MIT",
+  "author": "ChamathDilshanC",
+  "homepage": "https://github.com/ChamathDilshanC/create-stack-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChamathDilshanC/create-stack-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ChamathDilshanC/create-stack-cli/issues"
+  },
+  "bin": {
+    "create-stack": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "start": "node ./bin/cli.js",
+    "test:smoke": "node ./bin/cli.js --help"
+  },
+  "keywords": [
+    "cli",
+    "scaffold",
+    "generator",
+    "boilerplate",
+    "react",
+    "vue",
+    "angular",
+    "typescript",
+    "vite",
+    "create-app"
+  ],
+  "dependencies": {
+    "boxen": "^8.0.1",
+    "commander": "^12.1.0",
+    "execa": "^9.4.1",
+    "fs-extra": "^11.2.0",
+    "ora": "^8.1.1",
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2"
+  }
+}
