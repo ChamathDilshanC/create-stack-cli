@@ -1,0 +1,89 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-templates:
+    strategy:
+      fail-fast: false
+      matrix:
+        template:
+          - react-ts
+          - react-js
+          - vue-ts
+          - vue-js
+          - vanilla-ts
+          - vanilla-js
+          - angular-ts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Scaffold ${{ matrix.template }}
+        run: >
+          node bin/cli.js /tmp/test-app
+          --template ${{ matrix.template }}
+          --extras tailwind,eslint,prettier
+          --pm npm
+          --no-install
+          --yes
+
+      - name: Install generated project dependencies
+        working-directory: /tmp/test-app
+        run: npm install
+
+      - name: Lint generated project
+        working-directory: /tmp/test-app
+        run: npx eslint .
+
+      - name: Build generated project
+        working-directory: /tmp/test-app
+        run: npm run build
+
+  release:
+    needs: test-templates
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      - name: Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to GitHub Packages
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: npm publish --registry=https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
