@@ -1,5 +1,5 @@
 {
-  "name": "@ChamathDilshanC/create-stack",
+  "name": "@chamathdilshanc/create-stack",
   "version": "1.0.0",
   "description": "Universal, interactive CLI scaffolder for React, Vue, Angular, and Vanilla projects — with optional TypeScript, Tailwind CSS, ESLint, and Prettier.",
   "type": "module",
@@ -14,7 +14,7 @@
     "url": "https://github.com/ChamathDilshanC/create-stack-cli/issues"
   },
   "bin": {
-    "create-stack": "./bin/cli.js"
+    "create-stack": "bin/cli.js"
   },
   "files": [
     "bin",

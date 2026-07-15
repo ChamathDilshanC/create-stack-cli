@@ -15,9 +15,9 @@ A universal, interactive project scaffolder CLI — like `create-vite` or `creat
 ## Quick start
 
 ```bash
-npx @ChamathDilshanC/create-stack my-app
+npx @chamathdilshanc/create-stack my-app
 # or, once published, the shorter form some registries support:
-npm create @ChamathDilshanC/stack my-app
+npm create @chamathdilshanc/stack my-app
 ```
 
 Then follow the prompts:
@@ -36,7 +36,7 @@ Install dependencies now? Yes
 Every prompt can be skipped by passing the equivalent flag. Combine `--yes` with the required flags to run fully non-interactively (useful in CI):
 
 ```bash
-npx @ChamathDilshanC/create-stack my-app \
+npx @chamathdilshanc/create-stack my-app \
   --template react-ts \
   --extras tailwind,eslint,prettier \
   --pm pnpm \
@@ -96,7 +96,7 @@ create-stack my-test-app
 
 ## Publishing
 
-This package is configured to publish to **GitHub Packages** by default (see `publishConfig` in `package.json`). The package name is already scoped to `@ChamathDilshanC/create-stack`, since GitHub Packages requires the package name to match the owning account.
+This package is configured to publish to **GitHub Packages** by default (see `publishConfig` in `package.json`). The package name is already scoped to `@chamathdilshanc/create-stack`, since GitHub Packages requires the package name to match the owning account.
 
 ### Publish to GitHub Packages
 
