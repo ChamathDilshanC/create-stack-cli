@@ -94,26 +94,28 @@ npm link
 create-stack my-test-app
 ```
 
-## Publishing
+## Releasing
 
-This package is configured to publish to **GitHub Packages** by default (see `publishConfig` in `package.json`). The package name is already scoped to `@chamathdilshanc/create-stack`, since GitHub Packages requires the package name to match the owning account.
+Releases are fully automated with [semantic-release](https://semantic-release.gitbook.io/) via `.github/workflows/ci.yml`. On every push to `main`:
 
-### Publish to GitHub Packages
+1. The CLI is scaffolded, installed, linted, and built for all 7 templates (a matrix job) as a sanity check.
+2. `semantic-release` analyzes commit messages since the last release using [Conventional Commits](https://www.conventionalcommits.org/):
+   - `fix:` → patch release
+   - `feat:` → minor release
+   - `BREAKING CHANGE:` (in the commit body/footer) → major release
+   - `docs:`, `chore:`, `ci:`, etc. → no release
+3. If a release is warranted, it bumps `package.json`, updates `CHANGELOG.md`, publishes to **npm** and **GitHub Packages**, creates a Git tag + GitHub Release, and commits the version bump back to `main` (with `[skip ci]`).
+
+This requires an `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions) — a npm granular access token with **read/write** access to this package and **bypass 2FA** enabled.
+
+### Manual publish (fallback)
 
 ```bash
-# Authenticate once (needs a PAT with write:packages scope)
 npm login --registry=https://npm.pkg.github.com
+npm publish --registry=https://npm.pkg.github.com   # GitHub Packages (publishConfig default)
 
-npm publish
-```
-
-### Publish to the public npm registry
-
-GitHub Packages is set as the default registry via `publishConfig`, so publishing to npm instead means overriding it explicitly:
-
-```bash
 npm login
-npm publish --access public --registry=https://registry.npmjs.org
+npm publish --access public --registry=https://registry.npmjs.org   # public npm
 ```
 
 ## License
