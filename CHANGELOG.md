@@ -1,3 +1,15 @@
+# [2.0.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.7...v2.0.0) (2026-07-16)
+
+
+### Features
+
+* orchestrate official scaffolders and add enterprise folder structure ([b1ee1a8](https://github.com/ChamathDilshanC/create-stack-cli/commit/b1ee1a862976aca2393d77600b0ff228d035eb42))
+
+
+### BREAKING CHANGES
+
+* minimum supported Node version raised to >=20.19.0
+
 ## [1.0.7](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.6...v1.0.7) (2026-07-16)
 
 
