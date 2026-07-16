@@ -92,7 +92,7 @@ jobs:
         if: steps.semantic.outputs.new_release_published == 'true'
         run: echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
 
       - name: Publish to GitHub Packages
         if: steps.semantic.outputs.new_release_published == 'true'
