@@ -1,3 +1,10 @@
+## [1.0.6](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.5...v1.0.6) (2026-07-16)
+
+
+### Bug Fixes
+
+* bump vite floor version in templates to latest 5.4.x patch ([a453eae](https://github.com/ChamathDilshanC/create-stack-cli/commit/a453eae89d8899decd15940904982a59f6f787e2))
+
 ## [1.0.5](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.4...v1.0.5) (2026-07-16)
 
 
