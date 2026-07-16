@@ -124,7 +124,7 @@ document.querySelector${lang === 'ts' ? '<HTMLDivElement>' : ''}('#app')${lang =
 \`
 
 document.querySelector${lang === 'ts' ? '<HTMLButtonElement>' : ''}('#counter')${lang === 'ts' ? '!' : ''}.addEventListener('click', (event) => {
-  count += 1
+  count += 1;
   ${lang === 'ts' ? '(event.currentTarget as HTMLButtonElement)' : 'event.currentTarget'}.textContent = \`count is \${count}\`
 })
 `;

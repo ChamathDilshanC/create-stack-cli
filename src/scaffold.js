@@ -121,15 +121,23 @@ async function tryRun({ label, success, failure, command, args, cwd }) {
 /* ------------------------------------------------------------------ */
 
 /**
- * The path handed to the scaffolders, relative to our own cwd. Relative paths
- * are the form both create-vite and `ng new --directory` are documented with.
+ * Scaffolders are always invoked from the target directory's *parent*, with
+ * just the leaf folder name as the argument — the same way `npm create
+ * vite@latest my-app` is documented. A relative path computed from our own
+ * (arbitrary) cwd can require many "../" segments — e.g. CI checks out the
+ * repo somewhere and scaffolds into /tmp — and the Angular CLI's --directory
+ * validation rejects paths shaped like that; path.relative() can also never
+ * cross drive letters on Windows. Using the parent dir as cwd sidesteps both.
  */
-function relativeTargetDir({ targetDir }) {
-  return path.relative(process.cwd(), targetDir) || '.';
+async function scaffolderInvocation(targetDir) {
+  const cwd = path.dirname(targetDir);
+  await fs.ensureDir(cwd);
+  return { cwd, dirArg: path.basename(targetDir) };
 }
 
 async function runViteCreate(options) {
-  const { pm, viteTemplate, extras, framework } = options;
+  const { pm, viteTemplate, extras, framework, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
 
   const flags = ['--template', viteTemplate, '--no-interactive', '--no-immediate'];
   // create-vite's React templates lint with Oxlint by default; the official
@@ -142,16 +150,16 @@ async function runViteCreate(options) {
   // yarn, pnpm, and bun forward everything after the package name as-is.
   const args =
     pm === 'npm'
-      ? ['create', 'vite@latest', relativeTargetDir(options), '--', ...flags]
-      : ['create', 'vite', relativeTargetDir(options), ...flags];
+      ? ['create', 'vite@latest', dirArg, '--', ...flags]
+      : ['create', 'vite', dirArg, ...flags];
 
   await runScaffolder({
     label: `Scaffolding ${options.variant} project with create-vite...`,
     success: `Vite project scaffolded (template: ${viteTemplate}).`,
     command: pm,
     args,
-    cwd: process.cwd(),
-    expectFile: path.join(options.targetDir, 'package.json'),
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
   });
 }
 
@@ -162,7 +170,8 @@ function toAngularAppName(packageName) {
 }
 
 async function runAngularCreate(options) {
-  const { pm } = options;
+  const { pm, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
 
   const ngFlags = [
     '--defaults',
@@ -173,7 +182,7 @@ async function runAngularCreate(options) {
     '--package-manager',
     pm,
     '--directory',
-    relativeTargetDir(options),
+    dirArg,
   ];
 
   const appName = toAngularAppName(options.packageName);
@@ -187,8 +196,8 @@ async function runAngularCreate(options) {
     success: 'Angular workspace scaffolded (ng new).',
     command: pm,
     args,
-    cwd: process.cwd(),
-    expectFile: path.join(options.targetDir, 'package.json'),
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
   });
 }
 
