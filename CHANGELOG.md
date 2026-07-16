@@ -1,3 +1,10 @@
+## [1.0.7](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.6...v1.0.7) (2026-07-16)
+
+
+### Bug Fixes
+
+* use setup-node registry-url for GitHub Packages auth instead of manual npmrc append ([95727f5](https://github.com/ChamathDilshanC/create-stack-cli/commit/95727f53190ed7b915972f47e605ed61c2aaab8c))
+
 ## [1.0.6](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.5...v1.0.6) (2026-07-16)
 
 
