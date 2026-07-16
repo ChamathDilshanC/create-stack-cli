@@ -7,10 +7,28 @@ import { detectPackageManager } from './utils.js';
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
 const visibleWidth = (text) => text.replace(ANSI_RE, '').length;
 
-/** Lays `left` and `right` on one line, right-aligned to `width` columns. */
-function spaceBetween(left, right, width) {
-  const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
-  return `${left}${' '.repeat(gap)}${right}`;
+/** Pads `text` with trailing spaces to `width` visible columns (ANSI-aware). */
+function padEndVisible(text, width) {
+  const gap = Math.max(0, width - visibleWidth(text));
+  return `${text}${' '.repeat(gap)}`;
+}
+
+/** Centers `text` within `width` visible columns (ANSI-aware). */
+function centerVisible(text, width) {
+  const gap = Math.max(0, width - visibleWidth(text));
+  const left = Math.floor(gap / 2);
+  return `${' '.repeat(left)}${text}${' '.repeat(gap - left)}`;
+}
+
+/**
+ * Hard-caps plain (unstyled) text to `width` characters before it gets
+ * colored — user home directories and Node/package-manager strings are
+ * unbounded length, and the left column's divider only stays aligned if
+ * nothing in it can ever exceed its width.
+ */
+function truncate(text, width) {
+  if (text.length <= width) return text;
+  return `${text.slice(0, Math.max(0, width - 1))}…`;
 }
 
 /** `C:\Users\me\Desktop` → `~\Desktop`, like every polished CLI prints it. */
@@ -21,21 +39,87 @@ function prettyCwd() {
 }
 
 /**
- * The startup screen: a single responsive box with the product line, what the
- * tool does, and copy-pasteable tips — inspired by the Claude Code / Nuxt CLI
- * welcome banners.
+ * Our own mark: four solid bars in the exact colors FRAMEWORKS uses for
+ * React/Vue/Angular/Vanilla (prompts.js) — a literal little "stack".
  */
-export function printBanner(version) {
-  const columns = process.stdout.columns ?? 80;
-  // Inner text width: capped so lines stay scannable on wide terminals,
-  // shrunk (and gracefully wrapped by boxen) on narrow ones.
-  const width = Math.max(48, Math.min(64, columns - 8));
+function logo(width) {
+  const bar = '█'.repeat(width);
+  return [pc.cyan(bar), pc.green(bar), pc.red(bar), pc.yellow(bar)];
+}
 
-  const title = spaceBetween(
-    `${pc.cyan('◆')} ${pc.bold(pc.cyan('Create Stack CLI'))}`,
-    pc.dim(`v${version}`),
-    width
+/** Two-column layout — left: identity/environment, right: tips/links. */
+function printWideBanner(pkg, columns) {
+  const leftWidth = 30;
+  // Box overhead is border(2) + padding(2) + the " │ " divider gutter(3);
+  // subtracting all of it makes the box land exactly on `columns` wide
+  // instead of stopping short, so the divider reaches the true right edge.
+  const rightWidth = Math.max(40, columns - leftWidth - 7);
+
+  const username = os.userInfo().username;
+  const barWidth = 16;
+
+  const left = [
+    pc.bold(truncate(`Welcome, ${username}!`, leftWidth)),
+    '',
+    ...centerLogoLines(logo(barWidth), leftWidth),
+    '',
+    pc.dim(truncate(`Node ${process.version} · ${detectPackageManager()} detected`, leftWidth)),
+    pc.dim(truncate(prettyCwd(), leftWidth)),
+  ];
+
+  const tips = [
+    ['create-stack my-app', 'scaffold straight into ./my-app'],
+    ['-t react-ts -e tailwind', 'preselect your stack'],
+    ['--help', 'see every option'],
+  ];
+  const cmdWidth = Math.max(...tips.map(([cmd]) => cmd.length));
+  const tipLines = tips.map(
+    ([cmd, hint]) => `${pc.dim('❯')} ${pc.cyan(cmd.padEnd(cmdWidth))}  ${pc.dim(hint)}`
   );
+
+  const right = [
+    pc.bold('Tips for getting started'),
+    ...tipLines,
+    '',
+    pc.dim('─'.repeat(rightWidth)),
+    '',
+    pc.bold('Docs & support'),
+    `❯ ${pc.dim(pkg.homepage ?? '')}`,
+  ];
+
+  const rowCount = Math.max(left.length, right.length);
+  const lines = [];
+  for (let i = 0; i < rowCount; i++) {
+    const leftCell = padEndVisible(left[i] ?? '', leftWidth);
+    const rightCell = right[i] ?? '';
+    lines.push(`${leftCell} ${pc.dim('│')} ${rightCell}`);
+  }
+
+  console.log(
+    boxen(lines.join('\n'), {
+      padding: { top: 1, bottom: 1, left: 1, right: 1 },
+      margin: { top: 1, bottom: 1, left: 0, right: 0 },
+      borderStyle: 'round',
+      borderColor: 'cyan',
+      title: `${pc.bold('Create Stack CLI')} ${pc.dim(`v${pkg.version}`)}`,
+      titleAlignment: 'left',
+      width: columns,
+    })
+  );
+}
+
+/** Centers each logo row within the left column, as one block. */
+function centerLogoLines(rows, width) {
+  return rows.map((row) => centerVisible(row, width));
+}
+
+/** Narrower fallback: a single stacked box, used when the terminal can't fit two columns. */
+function printCompactBanner(pkg, columns) {
+  // Border(2) + padding(3+3) = 8 of overhead; sizing content to columns - 8
+  // makes the box land exactly on the terminal's actual width.
+  const width = Math.max(48, columns - 8);
+
+  const title = `${pc.cyan('◆')} ${pc.bold(pc.cyan('Create Stack CLI'))} ${pc.dim(`v${pkg.version}`)}`;
 
   const tips = [
     ['create-stack my-app', 'scaffold straight into ./my-app'],
@@ -53,26 +137,42 @@ export function printBanner(version) {
     `Scaffold ${pc.bold('production-ready apps')} with the official tooling —`,
     `powered by ${pc.green('create-vite')} and the ${pc.red('Angular CLI')}. No stale templates.`,
     '',
-    pc.dim(`${pc.cyan('React')} · ${pc.green('Vue')} · ${pc.red('Angular')} · ${pc.yellow('Vanilla')} — TypeScript or JavaScript`),
+    pc.dim(
+      `${pc.cyan('React')} · ${pc.green('Vue')} · ${pc.red('Angular')} · ${pc.yellow('Vanilla')} — TypeScript or JavaScript`
+    ),
     '',
     pc.dim('─'.repeat(width)),
     '',
     pc.bold('Tips for getting started'),
     '',
     ...tipLines,
+    '',
+    pc.dim(`Node ${process.version} · ${detectPackageManager()} detected · ${prettyCwd()}`),
   ].join('\n');
 
   console.log(
     boxen(body, {
       padding: { top: 1, bottom: 1, left: 3, right: 3 },
-      margin: { top: 1, bottom: 0, left: 0, right: 0 },
+      margin: { top: 1, bottom: 1, left: 0, right: 0 },
       borderStyle: 'round',
       borderColor: 'cyan',
-      width: Math.min(width + 8, columns),
+      width: columns,
     })
   );
+}
 
-  console.log(
-    `  ${pc.dim(`node ${process.version} · ${detectPackageManager()} detected · ${prettyCwd()}`)}\n`
-  );
+const MIN_TWO_COLUMN_WIDTH = 92;
+
+/**
+ * The startup screen. Wide terminals get a two-column layout (identity/logo
+ * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
+ * style welcome banner); narrow ones fall back to a single stacked box.
+ */
+export function printBanner(pkg) {
+  const columns = process.stdout.columns ?? 80;
+  if (columns >= MIN_TWO_COLUMN_WIDTH) {
+    printWideBanner(pkg, columns);
+  } else {
+    printCompactBanner(pkg, columns);
+  }
 }

@@ -183,7 +183,7 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
 
 async function main() {
   const cli = parseArgs();
-  if (!cli.yes) printBanner(pkg.version);
+  if (!cli.yes) printBanner(pkg);
 
   const preset = buildPreset(cli);
   assertNonInteractiveComplete(preset, cli);

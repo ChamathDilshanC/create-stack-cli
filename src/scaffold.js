@@ -9,6 +9,7 @@ import {
   TAILWIND_STARTERS,
   VITE_CONFIG_WITH_TAILWIND,
 } from './starters.js';
+import { generateEnterpriseStructure } from './structure.js';
 import { commandOutputTail, logger } from './utils.js';
 
 /** CSS entry point that receives the Tailwind import, per framework. */
@@ -448,6 +449,14 @@ export async function scaffoldProject(options) {
   if (options.extras.includes('tailwind')) {
     await setupTailwind(options, warnings);
   }
+
+  // Feature-sliced enterprise layout — only for the frameworks it's designed
+  // for (Angular already imposes its own module structure; vanilla has no
+  // component/routing model for it to organize).
+  if (options.framework === 'react' || options.framework === 'vue') {
+    await generateEnterpriseStructure(options, warnings);
+  }
+
   if (options.extras.includes('eslint') && options.framework !== 'react') {
     await setupEslint(options);
   }
