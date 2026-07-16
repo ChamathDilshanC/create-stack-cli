@@ -94,6 +94,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
 
+      - name: Debug npmrc
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: |
+          echo "NPM_CONFIG_USERCONFIG=$NPM_CONFIG_USERCONFIG"
+          echo "--- file contents ---"
+          cat "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          echo "--- npm config get registry (github) ---"
+          npm config get //npm.pkg.github.com/:_authToken
+
       - name: Publish to GitHub Packages
         if: steps.semantic.outputs.new_release_published == 'true'
         run: npm publish --registry=https://npm.pkg.github.com
