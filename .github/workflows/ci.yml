@@ -94,14 +94,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
 
-      - name: Debug npmrc
+      - name: Debug npmrc (no secrets printed)
         if: steps.semantic.outputs.new_release_published == 'true'
         run: |
-          echo "NPM_CONFIG_USERCONFIG=$NPM_CONFIG_USERCONFIG"
-          echo "--- file contents ---"
-          cat "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          echo "--- npm config get registry (github) ---"
-          npm config get //npm.pkg.github.com/:_authToken
+          FILE="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          echo "NPM_CONFIG_USERCONFIG=$FILE"
+          echo "--- does a github packages auth line exist? ---"
+          grep -c "npm.pkg.github.com/:_authToken=" "$FILE" || true
+          echo "--- resolved token length via npm config (0 = empty/unset) ---"
+          npm config get //npm.pkg.github.com/:_authToken | tr -d '\n' | wc -c
 
       - name: Publish to GitHub Packages
         if: steps.semantic.outputs.new_release_published == 'true'
