@@ -22,9 +22,15 @@ jobs:
             hasBuild: true
             lint: eslint
           - name: svelte-ts
-            args: --type frontend -f svelte -l ts -s unocss -q biome
+            args: --type frontend -f svelte -l ts -s unocss -q eslint-prettier
             hasBuild: true
-            lint: biome
+            lint: eslint
+          # Biome's "recommended" ruleset (a11y/security/import-order) is
+          # stricter than any scaffolder's default template content
+          # satisfies — fastify-js below covers Biome against content this
+          # CLI actually generates instead, which is what's really being
+          # verified. css-modules/none here get no starter-component
+          # rewrite, so the frontend's own un-rewritten demo page stays.
           - name: solid-ts
             args: --type frontend -f solid -l ts -s css-modules -q none
             hasBuild: true

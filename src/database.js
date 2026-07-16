@@ -38,6 +38,18 @@ async function setupPrisma(options, warnings) {
   });
   if (!ok) {
     warnings.push('Run "npx prisma init" manually inside the project to finish Prisma setup.');
+    return;
+  }
+
+  // `prisma init` generates prisma.config.ts with double-quoted strings.
+  // Every quality setup in this CLI (and several official ones, e.g.
+  // NestJS's default) enforces single quotes via Prettier, which turns
+  // Prisma's own generated file into an immediate lint failure otherwise.
+  const configPath = path.join(options.targetDir, 'prisma.config.ts');
+  if (await fs.pathExists(configPath)) {
+    const source = await fs.readFile(configPath, 'utf8');
+    const normalized = source.replace(/"([^"\\]*)"/g, "'$1'");
+    if (normalized !== source) await fs.writeFile(configPath, normalized);
   }
 }
 

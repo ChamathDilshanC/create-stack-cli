@@ -363,7 +363,11 @@ export async function setupUnoCss(options, warnings) {
     options,
     warnings,
     packages: UNOCSS_PACKAGES,
-    floors: { unocss: '^0.64.0' },
+    // UnoCSS crossed into stable major versions a while back (66.x as of
+    // this writing) — a 0.x-style floor like ^0.64.0 caps npm's caret range
+    // to just 0.64.x, which predates the Vite 8 peer support newer
+    // releases actually have.
+    floors: { unocss: '^66.0.0' },
     label: 'UnoCSS',
   });
 
