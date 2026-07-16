@@ -1,3 +1,10 @@
+## [1.0.5](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.4...v1.0.5) (2026-07-16)
+
+
+### Bug Fixes
+
+* add safe (non-secret-leaking) npmrc diagnostics for GitHub Packages publish ([2c0d242](https://github.com/ChamathDilshanC/create-stack-cli/commit/2c0d24254f38efca3ec6e9dc9f0ddccb7f5d3de5))
+
 ## [1.0.4](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.3...v1.0.4) (2026-07-16)
 
 

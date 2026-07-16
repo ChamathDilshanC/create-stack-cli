@@ -1,6 +1,6 @@
 {
   "name": "@chamathdilshanc/create-stack",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Universal, interactive CLI scaffolder for React, Vue, Angular, and Vanilla projects — with optional TypeScript, Tailwind CSS, ESLint, and Prettier.",
   "type": "module",
   "license": "MIT",
