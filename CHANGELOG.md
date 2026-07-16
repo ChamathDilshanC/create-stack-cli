@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.2...v1.0.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* write GitHub Packages auth to the correct npm userconfig path in CI ([aaae384](https://github.com/ChamathDilshanC/create-stack-cli/commit/aaae384dd69ee17d90b8a2483b1d9aa56f754813))
+
 ## [1.0.2](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.1...v1.0.2) (2026-07-16)
 
 
