@@ -88,20 +88,18 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Configure GitHub Packages registry auth
+      # Re-running setup-node rewrites the npm userconfig with a clean auth
+      # entry for GitHub Packages — appending to the file by hand is fragile
+      # because setup-node's generated .npmrc has no trailing newline.
+      - name: Setup Node for GitHub Packages
         if: steps.semantic.outputs.new_release_published == 'true'
-        run: echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
-
-      - name: Debug npmrc (no secrets printed)
-        if: steps.semantic.outputs.new_release_published == 'true'
-        run: |
-          FILE="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          echo "NPM_CONFIG_USERCONFIG=$FILE"
-          echo "--- actual _authToken VALUE length (0/empty = the real bug) ---"
-          grep "npm.pkg.github.com/:_authToken=" "$FILE" | sed 's/.*_authToken=//' | tr -d '\n' | wc -c
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://npm.pkg.github.com"
 
       - name: Publish to GitHub Packages
         if: steps.semantic.outputs.new_release_published == 'true'
         run: npm publish --registry=https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
