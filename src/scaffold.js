@@ -28,18 +28,23 @@ export function templateExists(variant) {
   return fs.existsSync(templateDirFor(variant));
 }
 
+/** Template-only directories that exist to support scaffolding but should never ship in the generated project. */
+const TEMPLATE_ONLY_ENTRIES = new Set(['tailwind-overrides']);
+
 /** Copies every file from the template into the target dir, renaming special-cased files. */
 export async function copyTemplateFiles(templateDir, targetDir) {
   await fs.ensureDir(targetDir);
   const entries = await fs.readdir(templateDir);
 
   await Promise.all(
-    entries.map(async (entry) => {
-      const src = path.join(templateDir, entry);
-      const destName = RENAME_MAP[entry] ?? entry;
-      const dest = path.join(targetDir, destName);
-      await fs.copy(src, dest);
-    })
+    entries
+      .filter((entry) => !TEMPLATE_ONLY_ENTRIES.has(entry))
+      .map(async (entry) => {
+        const src = path.join(templateDir, entry);
+        const destName = RENAME_MAP[entry] ?? entry;
+        const dest = path.join(targetDir, destName);
+        await fs.copy(src, dest);
+      })
   );
 }
 
@@ -102,9 +107,9 @@ function buildExtraDevDependencies(options) {
 }
 
 /** Applies the selected extras (Tailwind / ESLint / Prettier) on top of the copied template. */
-export async function applyExtras(targetDir, options) {
+export async function applyExtras(templateDir, targetDir, options) {
   if (options.extras.includes('tailwind')) {
-    await addTailwind(targetDir, options);
+    await addTailwind(templateDir, targetDir, options);
   }
   if (options.extras.includes('eslint')) {
     await addEslint(targetDir, options);
@@ -114,7 +119,7 @@ export async function applyExtras(targetDir, options) {
   }
 }
 
-async function addTailwind(targetDir, options) {
+async function addTailwind(templateDir, targetDir, options) {
   const isAngular = options.framework === 'angular';
 
   await fs.writeFile(
@@ -154,6 +159,13 @@ export default {
     await fs.writeFile(cssPath, `${directives}\n${existing}`);
   } else {
     await fs.writeFile(cssPath, directives);
+  }
+
+  // Swap the starter component for a version actually styled with Tailwind
+  // utility classes, so the scaffold doesn't ship with an unused config.
+  const overridesDir = path.join(templateDir, 'tailwind-overrides');
+  if (await fs.pathExists(overridesDir)) {
+    await fs.copy(overridesDir, targetDir, { overwrite: true });
   }
 }
 
@@ -220,5 +232,5 @@ export async function scaffoldProject(options) {
 
   await copyTemplateFiles(templateDir, options.targetDir);
   await writePackageJson(options.targetDir, options);
-  await applyExtras(options.targetDir, options);
+  await applyExtras(templateDir, options.targetDir, options);
 }
