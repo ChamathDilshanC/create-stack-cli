@@ -1,3 +1,23 @@
+# [3.0.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v2.0.0...v3.0.0) (2026-07-16)
+
+
+### Bug Fixes
+
+* resolve CI failures in UnoCSS floor and Prisma+NestJS lint conflict ([75d74f1](https://github.com/ChamathDilshanC/create-stack-cli/commit/75d74f15e4aa82ab72dcc8a7381933fb6765901f))
+
+
+### Features
+
+* transform into a multi-tiered project orchestrator ([a0ea171](https://github.com/ChamathDilshanC/create-stack-cli/commit/a0ea171ab60cc40e4198d09ed214364226eac2f3))
+
+
+### BREAKING CHANGES
+
+* the CLI flags have changed shape entirely — --template
+and --extras are replaced by --type, --framework, --language, --styling,
+--database, and --quality. The "vanilla" frontend framework option has
+been removed.
+
 # [2.0.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v1.0.7...v2.0.0) (2026-07-16)
 
 
