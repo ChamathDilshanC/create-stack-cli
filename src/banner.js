@@ -39,12 +39,24 @@ function prettyCwd() {
 }
 
 /**
- * Our own mark: four solid bars in the exact colors FRAMEWORKS uses for
- * React/Vue/Angular/Vanilla (prompts.js) — a literal little "stack".
+ * Our own mark: a small ◆ peak over four pill-shaped bars, in the exact
+ * colors PROJECT_TYPES uses for Frontend/Fullstack/Backend/Desktop (prompts.js)
+ * — a literal little "stack" topped with the same ◆ used as the compact
+ * banner's title bullet. The half-block caps (▐…▌) are the same rounded-corner
+ * trick Claude Code's own mascot uses, just drawn as our own shape — and,
+ * like the ◆ and █ already used elsewhere in this file, they're plain Block
+ * Elements glyphs rather than the "ambiguous width" Dingbats that cause ora's
+ * checkmark to glue onto adjacent text in some terminal fonts.
  */
 function logo(width) {
-  const bar = '█'.repeat(width);
-  return [pc.cyan(bar), pc.green(bar), pc.red(bar), pc.yellow(bar)];
+  const bar = (color) => color(`▐${'█'.repeat(Math.max(0, width - 2))}▌`);
+  return [
+    pc.bold(pc.white('◆')),
+    bar(pc.cyan),
+    bar(pc.green),
+    bar(pc.red),
+    bar(pc.yellow),
+  ];
 }
 
 /** Two-column layout — left: identity/environment, right: tips/links. */
@@ -68,8 +80,8 @@ function printWideBanner(pkg, columns) {
   ];
 
   const tips = [
-    ['create-stack my-app', 'scaffold straight into ./my-app'],
-    ['-t react-ts -e tailwind', 'preselect your stack'],
+    ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile'],
+    ['--type backend -f nestjs', 'preselect your stack'],
     ['--help', 'see every option'],
   ];
   const cmdWidth = Math.max(...tips.map(([cmd]) => cmd.length));
@@ -122,8 +134,8 @@ function printCompactBanner(pkg, columns) {
   const title = `${pc.cyan('◆')} ${pc.bold(pc.cyan('Create Stack CLI'))} ${pc.dim(`v${pkg.version}`)}`;
 
   const tips = [
-    ['create-stack my-app', 'scaffold straight into ./my-app'],
-    ['-t react-ts -e tailwind', 'preselect your stack'],
+    ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile'],
+    ['--type backend -f nestjs', 'preselect your stack'],
     ['--help', 'see every option'],
   ];
   const cmdWidth = Math.max(...tips.map(([cmd]) => cmd.length));
@@ -134,11 +146,11 @@ function printCompactBanner(pkg, columns) {
   const body = [
     title,
     '',
-    `Scaffold ${pc.bold('production-ready apps')} with the official tooling —`,
-    `powered by ${pc.green('create-vite')} and the ${pc.red('Angular CLI')}. No stale templates.`,
+    `Scaffold ${pc.bold('production-ready apps')} with each stack's own official tooling —`,
+    `no stale templates, ever.`,
     '',
     pc.dim(
-      `${pc.cyan('React')} · ${pc.green('Vue')} · ${pc.red('Angular')} · ${pc.yellow('Vanilla')} — TypeScript or JavaScript`
+      `${pc.cyan('Frontend')} · ${pc.magenta('Fullstack')} · ${pc.green('Backend')} · ${pc.yellow('Desktop')} · ${pc.red('Mobile')}`
     ),
     '',
     pc.dim('─'.repeat(width)),

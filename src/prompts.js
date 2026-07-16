@@ -10,64 +10,85 @@ import {
 } from './utils.js';
 
 /**
- * Frameworks and the language variants each one supports.
- * `viteTemplate` is the official create-vite template the variant maps to;
- * Angular has none — it is scaffolded with the Angular CLI (`ng new`) instead,
- * and is TypeScript-only, matching how the Angular CLI itself works.
+ * The full decision tree: project type -> framework -> scaffolder metadata.
+ * `scaffolder` is the id scaffold.js dispatches on; `viteTemplate` is only
+ * present for frameworks create-vite itself supports; `forceLanguage` skips
+ * Q3 entirely for frameworks that only ship a TypeScript template.
  */
-export const FRAMEWORKS = [
-  {
-    name: 'react',
-    display: 'React',
-    color: pc.cyan,
-    variants: [
-      { name: 'react-ts', display: 'TypeScript', framework: 'react', language: 'ts', viteTemplate: 'react-ts' },
-      { name: 'react-js', display: 'JavaScript', framework: 'react', language: 'js', viteTemplate: 'react' },
-    ],
-  },
-  {
-    name: 'vue',
-    display: 'Vue',
-    color: pc.green,
-    variants: [
-      { name: 'vue-ts', display: 'TypeScript', framework: 'vue', language: 'ts', viteTemplate: 'vue-ts' },
-      { name: 'vue-js', display: 'JavaScript', framework: 'vue', language: 'js', viteTemplate: 'vue' },
-    ],
-  },
-  {
-    name: 'angular',
-    display: 'Angular',
-    color: pc.red,
-    variants: [
-      { name: 'angular-ts', display: 'TypeScript', framework: 'angular', language: 'ts' },
-    ],
-  },
-  {
-    name: 'vanilla',
-    display: 'Vanilla',
-    color: pc.yellow,
-    variants: [
-      { name: 'vanilla-ts', display: 'TypeScript', framework: 'vanilla', language: 'ts', viteTemplate: 'vanilla-ts' },
-      { name: 'vanilla-js', display: 'JavaScript', framework: 'vanilla', language: 'js', viteTemplate: 'vanilla' },
-    ],
-  },
+export const PROJECT_TYPES = [
+  { value: 'frontend', title: 'Frontend', color: pc.cyan },
+  { value: 'fullstack', title: 'Fullstack', color: pc.magenta },
+  { value: 'backend', title: 'Backend', color: pc.green },
+  { value: 'desktop', title: 'Desktop', color: pc.yellow },
+  { value: 'mobile', title: 'Mobile', color: pc.red },
 ];
 
-export const EXTRAS = [
-  { title: 'Tailwind CSS', value: 'tailwind' },
-  { title: 'ESLint', value: 'eslint' },
-  { title: 'Prettier', value: 'prettier' },
+export const FRAMEWORKS = {
+  frontend: [
+    { value: 'react', title: 'React', scaffolder: 'vite', viteTemplate: { ts: 'react-ts', js: 'react' } },
+    { value: 'vue', title: 'Vue', scaffolder: 'vite', viteTemplate: { ts: 'vue-ts', js: 'vue' } },
+    { value: 'angular', title: 'Angular', scaffolder: 'angular', forceLanguage: 'ts' },
+    { value: 'svelte', title: 'Svelte', scaffolder: 'vite', viteTemplate: { ts: 'svelte-ts', js: 'svelte' } },
+    { value: 'solid', title: 'SolidJS', scaffolder: 'vite', viteTemplate: { ts: 'solid-ts', js: 'solid' } },
+  ],
+  fullstack: [
+    { value: 'next', title: 'Next.js', scaffolder: 'next' },
+    { value: 'nuxt', title: 'Nuxt.js', scaffolder: 'nuxt' },
+    { value: 'sveltekit', title: 'SvelteKit', scaffolder: 'sveltekit' },
+    { value: 'astro', title: 'Astro', scaffolder: 'astro' },
+  ],
+  backend: [
+    { value: 'express', title: 'Express.js', scaffolder: 'manual-express' },
+    { value: 'nestjs', title: 'NestJS', scaffolder: 'nestjs', forceLanguage: 'ts' },
+    { value: 'fastify', title: 'Fastify', scaffolder: 'manual-fastify' },
+    { value: 'hono', title: 'Hono', scaffolder: 'hono' },
+  ],
+  desktop: [
+    { value: 'electron', title: 'Electron', scaffolder: 'electron' },
+    { value: 'tauri', title: 'Tauri', scaffolder: 'tauri' },
+  ],
+  mobile: [{ value: 'expo', title: 'Expo (React Native)', scaffolder: 'expo' }],
+};
+
+export const STYLING_OPTIONS = [
+  { value: 'tailwind', title: 'Tailwind CSS (v4)' },
+  { value: 'unocss', title: 'UnoCSS' },
+  { value: 'css-modules', title: 'CSS Modules' },
+  { value: 'none', title: 'None' },
+];
+
+export const DATABASE_OPTIONS = [
+  { value: 'prisma', title: 'Prisma' },
+  { value: 'drizzle', title: 'Drizzle ORM' },
+  { value: 'mongoose', title: 'Mongoose' },
+  { value: 'none', title: 'None' },
+];
+
+export const QUALITY_OPTIONS = [
+  { value: 'eslint-prettier', title: 'ESLint + Prettier' },
+  { value: 'biome', title: 'Biome' },
+  { value: 'none', title: 'None' },
 ];
 
 export const PACKAGE_MANAGERS = ['npm', 'yarn', 'pnpm', 'bun'];
+
+/** Styling only makes sense where there's UI to style. */
+export const supportsStyling = (projectType) =>
+  projectType === 'frontend' || projectType === 'fullstack' || projectType === 'desktop';
+
+/** A database/ORM only makes sense where there's a server to run it in. */
+export const supportsDatabase = (projectType) =>
+  projectType === 'backend' || projectType === 'fullstack';
 
 function onCancel() {
   throw new CancelledError('Scaffold cancelled.');
 }
 
 /**
- * Runs the interactive prompt flow. Any value already supplied via CLI flags
- * (in `preset`) is used as-is and its corresponding question is skipped.
+ * Runs the interactive decision tree. Any value already supplied via CLI
+ * flags (in `preset`) is used as-is and its corresponding question is
+ * skipped — including questions later steps make irrelevant (e.g. styling
+ * for a backend project is never asked, preset or not).
  */
 export async function getProjectOptions(preset = {}) {
   const result = { ...preset };
@@ -108,73 +129,137 @@ export async function getProjectOptions(preset = {}) {
     result.packageName = packageName;
   }
 
-  // 2. Framework.
-  if (!result.framework) {
-    const { framework } = await prompts(
+  // 2. Project type (Q1).
+  if (!result.projectType) {
+    const { projectType } = await prompts(
       {
         type: 'select',
-        name: 'framework',
-        message: 'Select a framework:',
-        choices: FRAMEWORKS.map((f) => ({
-          title: f.color(f.display),
-          value: f.name,
-        })),
+        name: 'projectType',
+        message: 'What are you building?',
+        choices: PROJECT_TYPES.map((t) => ({ title: t.color(t.title), value: t.value })),
       },
       { onCancel }
     );
-    result.framework = framework;
+    result.projectType = projectType;
   }
 
-  const frameworkDef = FRAMEWORKS.find((f) => f.name === result.framework);
-  if (!frameworkDef) {
-    throw new Error(`Unknown framework: ${result.framework}`);
+  const frameworkChoices = FRAMEWORKS[result.projectType];
+  if (!frameworkChoices) {
+    throw new Error(`Unknown project type: ${result.projectType}`);
   }
 
-  // 3. Variant (language) — skipped when the framework only has one option.
-  if (!result.variant) {
-    if (frameworkDef.variants.length === 1) {
-      result.variant = frameworkDef.variants[0].name;
+  // 3. Framework (Q2) — skipped when the category only has one option (Mobile).
+  if (!result.framework) {
+    if (frameworkChoices.length === 1) {
+      result.framework = frameworkChoices[0].value;
     } else {
-      const { variant } = await prompts(
+      const { framework } = await prompts(
         {
           type: 'select',
-          name: 'variant',
-          message: 'Select a variant:',
-          choices: frameworkDef.variants.map((v) => ({
-            title: v.display,
-            value: v.name,
-          })),
+          name: 'framework',
+          message: 'Select a framework:',
+          choices: frameworkChoices.map((f) => ({ title: f.title, value: f.value })),
         },
         { onCancel }
       );
-      result.variant = variant;
+      result.framework = framework;
     }
   }
 
-  const variantDef = frameworkDef.variants.find((v) => v.name === result.variant);
-  if (!variantDef) {
-    throw new Error(`Unknown variant: ${result.variant}`);
+  const frameworkDef = frameworkChoices.find((f) => f.value === result.framework);
+  if (!frameworkDef) {
+    throw new Error(`Unknown framework "${result.framework}" for project type "${result.projectType}".`);
   }
-  result.language = variantDef.language;
-  result.viteTemplate = variantDef.viteTemplate;
+  result.scaffolder = frameworkDef.scaffolder;
+  result.viteTemplate = frameworkDef.viteTemplate;
 
-  // 4. Extras.
-  if (!result.extras) {
-    const { extras } = await prompts(
+  // 4. Language (Q3) — hidden entirely when the framework forces one (Angular, NestJS).
+  if (frameworkDef.forceLanguage) {
+    result.language = frameworkDef.forceLanguage;
+  } else if (!result.language) {
+    const { language } = await prompts(
       {
-        type: 'multiselect',
-        name: 'extras',
-        message: 'Select extra tools:',
-        hint: '- Space to select, Enter to confirm',
-        instructions: false,
-        choices: EXTRAS,
+        type: 'select',
+        name: 'language',
+        message: 'Language:',
+        choices: [
+          { title: 'TypeScript', value: 'ts' },
+          { title: 'JavaScript', value: 'js' },
+        ],
+        initial: 0,
       },
       { onCancel }
     );
-    result.extras = extras ?? [];
+    result.language = language;
   }
 
-  // 5. Package manager.
+  // 5. Styling (Q4) — only where there's UI to style.
+  if (supportsStyling(result.projectType)) {
+    if (!result.styling) {
+      const { styling } = await prompts(
+        {
+          type: 'select',
+          name: 'styling',
+          message: 'Styling:',
+          choices: STYLING_OPTIONS,
+        },
+        { onCancel }
+      );
+      result.styling = styling;
+    }
+  } else {
+    result.styling = 'none';
+  }
+
+  // 6. Database / ORM (Q5) — only where there's a server to run it in.
+  if (supportsDatabase(result.projectType)) {
+    if (!result.database) {
+      const { database } = await prompts(
+        {
+          type: 'select',
+          name: 'database',
+          message: 'Database / ORM:',
+          choices: DATABASE_OPTIONS,
+        },
+        { onCancel }
+      );
+      result.database = database;
+    }
+  } else {
+    result.database = 'none';
+  }
+
+  // 7. Code quality (Q6a) — a single select, not two checkboxes: ESLint and
+  // Biome are mutually exclusive tools, so a radio choice makes that
+  // impossible to violate instead of just discouraged.
+  if (!result.quality) {
+    const { quality } = await prompts(
+      {
+        type: 'select',
+        name: 'quality',
+        message: 'Code quality tooling:',
+        choices: QUALITY_OPTIONS,
+      },
+      { onCancel }
+    );
+    result.quality = quality;
+  }
+
+  // 8. Docker (Q6b).
+  if (result.docker === undefined) {
+    const { docker } = await prompts(
+      {
+        type: 'confirm',
+        name: 'docker',
+        message: 'Add Docker support (Dockerfile + docker-compose.yml)?',
+        initial: false,
+      },
+      { onCancel }
+    );
+    result.docker = docker;
+  }
+
+  // 9. Package manager.
   if (!result.pm) {
     const { pm } = await prompts(
       {
@@ -189,7 +274,7 @@ export async function getProjectOptions(preset = {}) {
     result.pm = pm;
   }
 
-  // 6. Auto-install confirmation.
+  // 10. Auto-install confirmation.
   if (result.install === undefined) {
     const { install } = await prompts(
       {

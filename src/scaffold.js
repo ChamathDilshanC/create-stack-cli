@@ -1,161 +1,37 @@
 import path from 'node:path';
 import fs from 'fs-extra';
-import { execa } from 'execa';
-import ora from 'ora';
 
-import {
-  ANGULAR_POSTCSS_CONFIG,
-  TAILWIND_CSS_ENTRY,
-  TAILWIND_STARTERS,
-  VITE_CONFIG_WITH_TAILWIND,
-} from './starters.js';
-import { generateEnterpriseStructure } from './structure.js';
-import { commandOutputTail, logger } from './utils.js';
-
-/** CSS entry point that receives the Tailwind import, per framework. */
-const CSS_ENTRY = {
-  react: 'src/index.css',
-  vue: 'src/style.css',
-  vanilla: 'src/style.css',
-  angular: 'src/styles.css',
-};
-
-/** `<pm> <args> <packages>` prefix that adds dev dependencies, per manager. */
-const ADD_DEV_ARGS = {
-  npm: ['install', '--save-dev'],
-  yarn: ['add', '--dev'],
-  pnpm: ['add', '--save-dev'],
-  bun: ['add', '--dev'],
-};
-
-/**
- * Tailwind v4 packages per build pipeline. Vite projects use the first-party
- * Vite plugin; Angular's builder isn't Vite-pluggable, so it goes through
- * PostCSS — both exactly as the official framework guides describe.
- */
-const TAILWIND_PACKAGES = {
-  vite: ['tailwindcss', '@tailwindcss/vite'],
-  angular: ['tailwindcss', '@tailwindcss/postcss', 'postcss'],
-};
-
-/**
- * Version floors written to package.json when a live install isn't possible
- * (--no-install, or a network failure mid-setup). Carets resolve to the
- * latest release within the major on the user's next `<pm> install`.
- */
-const VERSION_FLOORS = {
-  tailwindcss: '^4.0.0',
-  '@tailwindcss/vite': '^4.0.0',
-  '@tailwindcss/postcss': '^4.0.0',
-  postcss: '^8.4.0',
-};
-
-const ESLINT_DEPS = {
-  eslint: '^9.0.0',
-  '@eslint/js': '^9.0.0',
-  globals: '^15.0.0',
-};
-const ESLINT_TS_DEPS = { 'typescript-eslint': '^8.0.0' };
-const ESLINT_VUE_DEPS = { 'eslint-plugin-vue': '^9.28.0' };
-const ESLINT_PRETTIER_DEPS = { 'eslint-config-prettier': '^9.1.0' };
-const PRETTIER_DEPS = { prettier: '^3.0.0' };
+import { applyDatabase } from './database.js';
+import { applyDocker } from './docker.js';
+import { applyQuality } from './quality.js';
+import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
+import { generateEnterpriseStructure, modelsDirFor } from './structure.js';
+import { applyStyling } from './styling.js';
+import { logger } from './utils.js';
 
 /* ------------------------------------------------------------------ */
-/* Command runners                                                     */
+/* Frontend                                                            */
 /* ------------------------------------------------------------------ */
-
-const formatCommand = (command, args) => [command, ...args].join(' ');
-
-/**
- * Runs a required step behind a spinner. `stdin: 'ignore'` makes any
- * unexpected interactive prompt in the child fail fast instead of hanging
- * the CLI forever. Some scaffolders (e.g. @angular/create's Node version
- * check) print an error but still exit 0, so a successful exit only counts
- * when `expectFile` was actually created.
- */
-async function runScaffolder({ label, success, command, args, cwd, expectFile }) {
-  logger.dim(`  › ${formatCommand(command, args)}`);
-  const spinner = ora({ text: label, indent: 2 }).start();
-  let result;
-  try {
-    result = await execa(command, args, { cwd, stdin: 'ignore' });
-  } catch (err) {
-    spinner.fail(`${label.replace(/\.{3}$/, '')} failed.`);
-    const tail = commandOutputTail(err);
-    throw new Error(
-      `\`${formatCommand(command, args)}\` exited with an error.` +
-        (tail ? `\n\n${tail}` : '') +
-        '\n\nIf this looks like a network hiccup, check your connection and try again.'
-    );
-  }
-
-  if (expectFile && !(await fs.pathExists(expectFile))) {
-    spinner.fail(`${label.replace(/\.{3}$/, '')} failed.`);
-    const tail = commandOutputTail(result);
-    throw new Error(
-      `\`${formatCommand(command, args)}\` finished without creating a project.` +
-        (tail ? `\n\n${tail}` : '')
-    );
-  }
-
-  spinner.succeed(success);
-}
-
-/** Runs an optional step behind a spinner; reports failure instead of throwing. */
-async function tryRun({ label, success, failure, command, args, cwd }) {
-  logger.dim(`  › ${formatCommand(command, args)}`);
-  const spinner = ora({ text: label, indent: 2 }).start();
-  try {
-    await execa(command, args, { cwd, stdin: 'ignore' });
-    spinner.succeed(success);
-    return true;
-  } catch (err) {
-    spinner.fail(failure);
-    const tail = commandOutputTail(err);
-    if (tail) logger.dim(tail);
-    return false;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Official scaffolders                                                */
-/* ------------------------------------------------------------------ */
-
-/**
- * Scaffolders are always invoked from the target directory's *parent*, with
- * just the leaf folder name as the argument — the same way `npm create
- * vite@latest my-app` is documented. A relative path computed from our own
- * (arbitrary) cwd can require many "../" segments — e.g. CI checks out the
- * repo somewhere and scaffolds into /tmp — and the Angular CLI's --directory
- * validation rejects paths shaped like that; path.relative() can also never
- * cross drive letters on Windows. Using the parent dir as cwd sidesteps both.
- */
-async function scaffolderInvocation(targetDir) {
-  const cwd = path.dirname(targetDir);
-  await fs.ensureDir(cwd);
-  return { cwd, dirArg: path.basename(targetDir) };
-}
 
 async function runViteCreate(options) {
-  const { pm, viteTemplate, extras, framework, targetDir } = options;
+  const { pm, framework, language, quality, targetDir } = options;
   const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+  const viteTemplate = options.viteTemplate[language];
 
   const flags = ['--template', viteTemplate, '--no-interactive', '--no-immediate'];
   // create-vite's React templates lint with Oxlint by default; the official
   // --eslint switch opts back into ESLint when the user asked for it.
-  if (framework === 'react' && extras.includes('eslint')) {
+  if (framework === 'react' && quality === 'eslint-prettier') {
     flags.push('--eslint');
   }
 
-  // Only npm needs `--` so the flags reach create-vite instead of npm itself;
-  // yarn, pnpm, and bun forward everything after the package name as-is.
   const args =
     pm === 'npm'
       ? ['create', 'vite@latest', dirArg, '--', ...flags]
       : ['create', 'vite', dirArg, ...flags];
 
   await runScaffolder({
-    label: `Scaffolding ${options.variant} project with create-vite...`,
+    label: `Scaffolding ${framework} project with create-vite...`,
     success: `Vite project scaffolded (template: ${viteTemplate}).`,
     command: pm,
     args,
@@ -165,7 +41,7 @@ async function runViteCreate(options) {
 }
 
 /** ng project names are stricter than npm package names (no scope, ~, _, .). */
-function toAngularAppName(packageName) {
+function toSafeAppName(packageName) {
   const base = packageName.replace(/^@[^/]+\//, '').replace(/[^a-zA-Z0-9-]/g, '-');
   return /^[a-zA-Z]/.test(base) ? base : `app-${base}`;
 }
@@ -186,7 +62,7 @@ async function runAngularCreate(options) {
     dirArg,
   ];
 
-  const appName = toAngularAppName(options.packageName);
+  const appName = toSafeAppName(options.packageName);
   const args =
     pm === 'npm'
       ? ['init', '@angular@latest', appName, '--', ...ngFlags]
@@ -202,242 +78,7 @@ async function runAngularCreate(options) {
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* package.json rewrites                                               */
-/* ------------------------------------------------------------------ */
-
-/** The scaffolders derive the name from the directory; use the validated one. */
-async function normalizePackageJson(options) {
-  const pkgPath = path.join(options.targetDir, 'package.json');
-  if (!(await fs.pathExists(pkgPath))) return;
-
-  const pkg = await fs.readJson(pkgPath);
-  pkg.name = options.packageName;
-  await fs.writeJson(pkgPath, pkg, { spaces: 2 });
-}
-
-/** Adds dev dependencies without touching ranges a live install already wrote. */
-async function mergeDevDependencies(targetDir, deps) {
-  const pkgPath = path.join(targetDir, 'package.json');
-  const pkg = await fs.readJson(pkgPath);
-
-  const devDependencies = { ...(pkg.devDependencies ?? {}) };
-  for (const [name, range] of Object.entries(deps)) {
-    if (devDependencies[name] || pkg.dependencies?.[name]) continue;
-    devDependencies[name] = range;
-  }
-
-  pkg.devDependencies = Object.fromEntries(
-    Object.entries(devDependencies).sort(([a], [b]) => a.localeCompare(b))
-  );
-  await fs.writeJson(pkgPath, pkg, { spaces: 2 });
-}
-
-/* ------------------------------------------------------------------ */
-/* Tailwind CSS (v4, official setup)                                   */
-/* ------------------------------------------------------------------ */
-
-/**
- * Injects the @tailwindcss/vite plugin into the generated Vite config, or
- * writes a fresh one when the template ships without (vanilla). Returns false
- * when the config exists but can't be transformed safely.
- */
-async function wireTailwindIntoViteConfig({ targetDir, language }) {
-  const configNames = ['vite.config.ts', 'vite.config.js', 'vite.config.mts', 'vite.config.mjs'];
-  let configName = null;
-  for (const name of configNames) {
-    if (await fs.pathExists(path.join(targetDir, name))) {
-      configName = name;
-      break;
-    }
-  }
-
-  if (!configName) {
-    const freshName = language === 'ts' ? 'vite.config.ts' : 'vite.config.js';
-    await fs.writeFile(path.join(targetDir, freshName), VITE_CONFIG_WITH_TAILWIND);
-    return true;
-  }
-
-  const configPath = path.join(targetDir, configName);
-  let source = await fs.readFile(configPath, 'utf8');
-  if (source.includes('@tailwindcss/vite')) return true;
-
-  source = `import tailwindcss from '@tailwindcss/vite'\n${source}`;
-  if (/plugins\s*:\s*\[/.test(source)) {
-    source = source.replace(/plugins\s*:\s*\[/, 'plugins: [tailwindcss(), ');
-  } else if (/defineConfig\(\{/.test(source)) {
-    source = source.replace(/defineConfig\(\{/, 'defineConfig({\n  plugins: [tailwindcss()],');
-  } else {
-    return false;
-  }
-
-  await fs.writeFile(configPath, source);
-  return true;
-}
-
-/**
- * Swaps the scaffolder's starter component for one styled with Tailwind
- * utility classes, so the project renders proof that Tailwind works instead
- * of shipping an installed-but-unused dependency.
- */
-async function writeTailwindStarter(options, warnings) {
-  const starter = TAILWIND_STARTERS[options.framework];
-  if (!starter) return;
-
-  const candidates = starter.candidates(options.language);
-  let target = null;
-  for (const rel of candidates) {
-    if (await fs.pathExists(path.join(options.targetDir, rel))) {
-      target = rel;
-      break;
-    }
-  }
-
-  if (!target) {
-    warnings.push(
-      `Could not locate the starter component (looked for ${candidates.join(', ')}); ` +
-        'Tailwind is configured, but the demo component was skipped.'
-    );
-    return;
-  }
-
-  await fs.writeFile(path.join(options.targetDir, target), starter.content(options.language));
-
-  await Promise.all(
-    starter.obsolete.map(async (rel) => {
-      const abs = path.join(options.targetDir, rel);
-      if (await fs.pathExists(abs)) await fs.remove(abs);
-    })
-  );
-}
-
-async function setupTailwind(options, warnings) {
-  const { framework, targetDir, pm } = options;
-  const isAngular = framework === 'angular';
-  const packages = TAILWIND_PACKAGES[isAngular ? 'angular' : 'vite'];
-  const floors = Object.fromEntries(packages.map((name) => [name, VERSION_FLOORS[name]]));
-
-  // 1. Dependencies — the official install command when we're allowed on the
-  //    network; otherwise (or on failure) a package.json merge the user's
-  //    next `<pm> install` resolves.
-  if (options.install) {
-    const installed = await tryRun({
-      label: 'Installing Tailwind CSS...',
-      success: 'Tailwind CSS installed.',
-      failure: 'Tailwind CSS could not be downloaded.',
-      command: pm,
-      args: [...ADD_DEV_ARGS[pm], ...packages],
-      cwd: targetDir,
-    });
-    if (!installed) {
-      await mergeDevDependencies(targetDir, floors);
-      warnings.push(
-        `Tailwind packages were added to package.json but not downloaded — run "${pm} install" inside the project to finish setup.`
-      );
-    }
-  } else {
-    await mergeDevDependencies(targetDir, floors);
-  }
-
-  // 2. Build wiring + CSS entry + starter component, all via fs rewrites.
-  const spinner = ora({ text: 'Configuring Tailwind CSS...', indent: 2 }).start();
-  try {
-    if (isAngular) {
-      await fs.writeFile(path.join(targetDir, '.postcssrc.json'), ANGULAR_POSTCSS_CONFIG);
-    } else if (!(await wireTailwindIntoViteConfig(options))) {
-      warnings.push(
-        'vite.config could not be updated automatically — add the @tailwindcss/vite plugin manually: https://tailwindcss.com/docs/installation/using-vite'
-      );
-    }
-
-    await fs.outputFile(path.join(targetDir, CSS_ENTRY[framework]), TAILWIND_CSS_ENTRY);
-    await writeTailwindStarter(options, warnings);
-
-    spinner.succeed('Tailwind CSS configured (v4, official setup).');
-  } catch (err) {
-    spinner.fail('Tailwind CSS configuration failed.');
-    throw err;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* ESLint / Prettier extras                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * Writes a flat ESLint config for non-React frameworks. React projects get
- * the official setup from create-vite's --eslint flag instead (see
- * runViteCreate), so this is never called for them.
- */
-async function setupEslint(options) {
-  const { targetDir, language, framework, extras } = options;
-  const isTs = language === 'ts';
-  const withPrettier = extras.includes('prettier');
-
-  const deps = { ...ESLINT_DEPS };
-  const imports = ["import js from '@eslint/js';", "import globals from 'globals';"];
-  const configParts = ['js.configs.recommended'];
-
-  if (isTs) {
-    imports.push("import tseslint from 'typescript-eslint';");
-    configParts.push('...tseslint.configs.recommended');
-    Object.assign(deps, ESLINT_TS_DEPS);
-  }
-  if (framework === 'vue') {
-    imports.push("import pluginVue from 'eslint-plugin-vue';");
-    configParts.push("...pluginVue.configs['flat/recommended']");
-    Object.assign(deps, ESLINT_VUE_DEPS);
-  }
-  if (withPrettier) {
-    imports.push("import eslintConfigPrettier from 'eslint-config-prettier';");
-    configParts.push('eslintConfigPrettier');
-    Object.assign(deps, ESLINT_PRETTIER_DEPS);
-  }
-
-  const content = `${imports.join('\n')}
-
-export default [
-  { ignores: ['dist', 'dist/**', '**/*.d.ts'] },
-  { languageOptions: { globals: { ...globals.browser, ...globals.node } } },
-  ${configParts.join(',\n  ')},
-];
-`;
-
-  await fs.writeFile(path.join(targetDir, 'eslint.config.js'), content);
-  await mergeDevDependencies(targetDir, deps);
-}
-
-async function setupPrettier(options) {
-  await fs.writeJson(
-    path.join(options.targetDir, '.prettierrc.json'),
-    {
-      semi: true,
-      singleQuote: true,
-      trailingComma: 'all',
-      printWidth: 80,
-    },
-    { spaces: 2 }
-  );
-  await fs.writeFile(
-    path.join(options.targetDir, '.prettierignore'),
-    'dist\nnode_modules\ncoverage\n'
-  );
-  await mergeDevDependencies(options.targetDir, PRETTIER_DEPS);
-}
-
-/* ------------------------------------------------------------------ */
-/* Entry point                                                         */
-/* ------------------------------------------------------------------ */
-
-/**
- * Orchestrates the whole scaffold: runs the official initializer for the
- * chosen framework, then layers the selected extras on top with live install
- * commands and targeted fs rewrites. Returns non-fatal `warnings` for the
- * final summary.
- */
-export async function scaffoldProject(options) {
-  const warnings = [];
-
+async function handleFrontend(options, warnings) {
   if (options.framework === 'angular') {
     await runAngularCreate(options);
   } else {
@@ -445,24 +86,563 @@ export async function scaffoldProject(options) {
   }
 
   await normalizePackageJson(options);
+  await applyStyling(options, warnings);
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
+  await applyQuality(options, warnings, {
+    eslintHandledInline: options.framework === 'react' && options.quality === 'eslint-prettier',
+  });
 
-  if (options.extras.includes('tailwind')) {
-    await setupTailwind(options, warnings);
+  if (options.docker) {
+    await applyDocker(options, warnings, { flavor: 'static', buildCommand: 'npm run build', port: 8080 });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Fullstack                                                           */
+/* ------------------------------------------------------------------ */
+
+async function runNextCreate(options) {
+  const { pm, language, styling, quality, install, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  const flags = [
+    language === 'ts' ? '--ts' : '--js',
+    styling === 'tailwind' ? '--tailwind' : '--no-tailwind',
+    quality === 'eslint-prettier' ? '--eslint' : '--no-eslint',
+    '--app',
+    `--use-${pm}`,
+    '--disable-git',
+    '--yes',
+  ];
+  if (quality === 'biome') flags.push('--biome');
+  if (!install) flags.push('--skip-install');
+
+  await runScaffolder({
+    label: 'Scaffolding Next.js project with create-next-app...',
+    success: 'Next.js project scaffolded.',
+    command: 'npx',
+    args: ['create-next-app@latest', dirArg, ...flags],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function runNuxtCreate(options) {
+  const { pm, install, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  // nuxi init requires --template and --gitInit explicitly when run
+  // non-interactively — it won't fall back to defaults on its own.
+  const flags = ['--template', 'minimal', '--no-gitInit', '--packageManager', pm];
+  if (!install) flags.push('--no-install');
+
+  await runScaffolder({
+    label: 'Scaffolding Nuxt project with nuxi...',
+    success: 'Nuxt project scaffolded.',
+    command: 'npx',
+    args: ['nuxi@latest', 'init', dirArg, ...flags],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function runSvelteKitCreate(options) {
+  const { pm, language, styling, quality, database, install, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  // sv create's --add addons cover Tailwind, ESLint+Prettier, and Drizzle
+  // natively — using them beats a post-hoc config rewrite, so the relevant
+  // steps below are skipped for those specific combinations.
+  // sv create only skips its interactive prompts when every option of every
+  // addon is explicitly set — a bare addon name with sub-options (like
+  // tailwindcss's plugin picker) still stops to ask.
+  const addons = [];
+  if (styling === 'tailwind') addons.push('tailwindcss=plugins:none');
+  if (quality === 'eslint-prettier') addons.push('eslint', 'prettier');
+  if (database === 'drizzle') addons.push('drizzle=database:sqlite+client:better-sqlite3');
+
+  const flags = [
+    '--template',
+    'minimal',
+    ...(language === 'ts' ? ['--types', 'ts'] : ['--no-types']),
+    ...(addons.length > 0 ? ['--add', ...addons] : ['--no-add-ons']),
+    ...(install ? ['--install', pm] : ['--no-install']),
+  ];
+
+  await runScaffolder({
+    label: 'Scaffolding SvelteKit project with sv create...',
+    success: 'SvelteKit project scaffolded.',
+    command: 'npx',
+    args: ['sv@latest', 'create', dirArg, ...flags],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function runAstroCreate(options) {
+  const { install, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  // create-astro's own `--add tailwind` requires a live install (it fails
+  // outright under --no-install), so Tailwind is wired in afterwards by
+  // applyStyling instead — same generic path as Nuxt.
+  const flags = ['--template', 'basics', '--no-git', '--yes'];
+  flags.push(install ? '--install' : '--no-install');
+
+  await runScaffolder({
+    label: 'Scaffolding Astro project with create-astro...',
+    success: 'Astro project scaffolded.',
+    command: 'npx',
+    args: ['create-astro@latest', dirArg, ...flags],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function handleFullstack(options, warnings) {
+  const { framework } = options;
+
+  if (framework === 'next') await runNextCreate(options);
+  else if (framework === 'nuxt') await runNuxtCreate(options);
+  else if (framework === 'sveltekit') await runSvelteKitCreate(options);
+  else if (framework === 'astro') await runAstroCreate(options);
+
+  await normalizePackageJson(options);
+
+  // Tailwind is handled inline (scaffold-time flags) only for Next.js and
+  // SvelteKit; Nuxt and Astro always go through the generic post-hoc
+  // injector (Astro's own --add requires a live install, so it can't be
+  // used unconditionally). UnoCSS/CSS Modules always use the generic path,
+  // since none of these tools have a native addon for them.
+  const tailwindHandledInline = ['next', 'sveltekit'].includes(framework) && options.styling === 'tailwind';
+  if (!tailwindHandledInline) {
+    await applyStyling(options, warnings);
   }
 
-  // Feature-sliced enterprise layout — only for the frameworks it's designed
-  // for (Angular already imposes its own module structure; vanilla has no
-  // component/routing model for it to organize).
-  if (options.framework === 'react' || options.framework === 'vue') {
-    await generateEnterpriseStructure(options, warnings);
+  const hasSrcDir = await fs.pathExists(path.join(options.targetDir, 'src'));
+  const modelsDir = hasSrcDir ? path.join('src', modelsDirNameOnly(options)) : modelsDirNameOnly(options);
+  const drizzleHandledInline = framework === 'sveltekit' && options.database === 'drizzle';
+  if (options.database !== 'none' && !drizzleHandledInline) {
+    await applyDatabase(options, warnings, { modelsDir });
   }
 
-  if (options.extras.includes('eslint') && options.framework !== 'react') {
-    await setupEslint(options);
+  const eslintHandledInline =
+    (framework === 'next' && options.quality !== 'none') ||
+    (framework === 'sveltekit' && options.quality === 'eslint-prettier');
+  const prettierHandledInline = framework === 'sveltekit' && options.quality === 'eslint-prettier';
+  const biomeHandledInline = framework === 'next' && options.quality === 'biome';
+  if (!biomeHandledInline) {
+    await applyQuality(options, warnings, { eslintHandledInline, prettierHandledInline });
   }
-  if (options.extras.includes('prettier')) {
-    await setupPrettier(options);
+
+  if (options.docker) {
+    const nodeStart = { next: 'npm start', nuxt: 'node .output/server/index.mjs', astro: 'node ./dist/server/entry.mjs' };
+    await applyDocker(options, warnings, {
+      flavor: 'node',
+      buildCommand: 'npm run build',
+      startCommand: nodeStart[framework] ?? 'npm start',
+      port: 3000,
+    });
   }
+}
+
+function modelsDirNameOnly(options) {
+  return options.database === 'drizzle' ? 'db' : 'models';
+}
+
+/* ------------------------------------------------------------------ */
+/* Backend                                                              */
+/* ------------------------------------------------------------------ */
+
+const EXPRESS_SERVER = (isTs) => `import express from 'express';${isTs ? "\nimport type { Request, Response } from 'express';" : ''}
+
+const app = express();
+const port = process.env.PORT ?? 3000;
+
+app.use(express.json());
+
+app.get('/', (${isTs ? '_req: Request, res: Response' : '_req, res'}) => {
+  res.json({ message: 'Hello from Express!' });
+});
+
+app.listen(port, () => {
+  console.log(\`Server running at http://localhost:\${port}\`);
+});
+`;
+
+const FASTIFY_SERVER = (isTs) => `import Fastify from 'fastify';
+
+const fastify = Fastify({ logger: true });
+
+fastify.get('/', async () => {
+  return { message: 'Hello from Fastify!' };
+});
+
+const port = Number(process.env.PORT ?? 3000);
+
+fastify.listen({ port, host: '0.0.0.0' }, (err) => {
+  if (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+});
+`;
+
+const NODE_TSCONFIG = `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}
+`;
+
+/**
+ * Express and Fastify have no official modern scaffolding CLI, so this
+ * writes a clean package.json + server entry by hand instead of running an
+ * initializer — the one deliberate exception to "always use the official
+ * tool" in this CLI.
+ */
+async function runManualBackendScaffold(options, kind) {
+  const { targetDir, packageName, language, pm } = options;
+  const isTs = language === 'ts';
+  const ext = isTs ? 'ts' : 'js';
+
+  await fs.ensureDir(targetDir);
+
+  const serverContent = kind === 'express' ? EXPRESS_SERVER(isTs) : FASTIFY_SERVER(isTs);
+  await fs.outputFile(path.join(targetDir, 'src', `server.${ext}`), serverContent);
+
+  const dependencies = kind === 'express' ? { express: '^4.21.0' } : { fastify: '^5.0.0' };
+  const devDependencies = isTs
+    ? {
+        typescript: '^5.6.0',
+        tsx: '^4.19.0',
+        '@types/node': '^22.0.0',
+        ...(kind === 'express' ? { '@types/express': '^4.17.0' } : {}),
+      }
+    : {};
+
+  const pkg = {
+    name: packageName,
+    version: '0.0.0',
+    private: true,
+    type: 'module',
+    scripts: isTs
+      ? { dev: 'tsx watch src/server.ts', build: 'tsc', start: 'node dist/server.js' }
+      : { dev: 'node --watch src/server.js', start: 'node src/server.js' },
+    dependencies,
+    devDependencies,
+  };
+  await fs.writeJson(path.join(targetDir, 'package.json'), pkg, { spaces: 2 });
+
+  if (isTs) {
+    await fs.writeFile(path.join(targetDir, 'tsconfig.json'), NODE_TSCONFIG);
+  }
+  await fs.writeFile(path.join(targetDir, '.gitignore'), 'node_modules\ndist\n.env\n');
+
+  logger.dim(`  › Wrote package.json + src/server.${ext} by hand (${kind} has no official scaffolder).`);
+
+  if (options.install) {
+    const { installDependencies } = await import('./install.js');
+    await installDependencies(targetDir, pm);
+  }
+}
+
+async function runNestCreate(options) {
+  const { pm, install, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  const flags = ['--package-manager', pm, '--skip-git', '--strict'];
+  if (!install) flags.push('--skip-install');
+
+  await runScaffolder({
+    label: 'Scaffolding NestJS project with the Nest CLI...',
+    success: 'NestJS project scaffolded.',
+    command: 'npx',
+    args: ['@nestjs/cli@latest', 'new', dirArg, ...flags],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function runHonoCreate(options) {
+  const { pm, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  // create-hono prompts interactively for "install dependencies?" and has
+  // no negation flag for it (--no-install isn't recognized) — always
+  // answering yes is the only way to skip that prompt non-interactively.
+  const flags = ['--template', 'nodejs', '--pm', pm, '--install'];
+
+  await runScaffolder({
+    label: 'Scaffolding Hono project with create-hono...',
+    success: 'Hono project scaffolded.',
+    command: 'npx',
+    args: ['create-hono@latest', dirArg, ...flags],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function handleBackend(options, warnings) {
+  const { framework } = options;
+
+  if (framework === 'express') return handleManualBackend(options, warnings, 'express');
+  if (framework === 'fastify') return handleManualBackend(options, warnings, 'fastify');
+  if (framework === 'nestjs') return handleNestBackend(options, warnings);
+  if (framework === 'hono') return handleHonoBackend(options, warnings);
+
+  throw new Error(`Unknown backend framework: ${framework}`);
+}
+
+async function handleManualBackend(options, warnings, kind) {
+  await runManualBackendScaffold(options, kind);
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
+  if (options.database !== 'none') {
+    await applyDatabase(options, warnings, { modelsDir: modelsDirFor(options, 'src') });
+  }
+  await applyQuality(options, warnings);
+  if (options.docker) {
+    const isTs = options.language === 'ts';
+    await applyDocker(options, warnings, {
+      flavor: 'node',
+      buildCommand: isTs ? 'npm run build' : undefined,
+      startCommand: 'npm start',
+      port: 3000,
+    });
+  }
+}
+
+async function handleNestBackend(options, warnings) {
+  await runNestCreate(options);
+  await normalizePackageJson(options);
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
+  if (options.database !== 'none') {
+    await applyDatabase(options, warnings, { modelsDir: modelsDirFor(options, 'src') });
+  }
+  // `nest new` always ships its own ESLint + Prettier config, with no flag
+  // to opt out — Biome still gets layered on top if that's what was asked
+  // for, but there's no CLI-level way to suppress Nest's own linting setup.
+  if (options.quality === 'eslint-prettier') {
+    warnings.push('NestJS ships its own ESLint + Prettier config by default; nothing further was needed.');
+  } else if (options.quality === 'biome') {
+    await applyQuality(options, warnings);
+    warnings.push(
+      'NestJS also ships its own ESLint + Prettier config by default — remove eslint.config.mjs/.prettierrc if you want Biome to be the only linter.'
+    );
+  } else {
+    warnings.push('NestJS always includes its own ESLint + Prettier config; there is no CLI flag to omit it.');
+  }
+  if (options.docker) {
+    await applyDocker(options, warnings, {
+      flavor: 'node',
+      buildCommand: 'npm run build',
+      startCommand: 'npm run start:prod',
+      port: 3000,
+    });
+  }
+}
+
+async function handleHonoBackend(options, warnings) {
+  await runHonoCreate(options);
+  // create-hono makes some network install activity regardless of
+  // --no-install, but (unlike Tauri/Electron) it doesn't reliably finish
+  // installing everything it puts in package.json — so, unlike those two,
+  // this does NOT force options.install for the steps below; a normal final
+  // `npm install` (respecting the user's real choice) still runs afterward.
+  if (!options.install) {
+    warnings.push('create-hono has no way to skip its dependency install — --no-install could not be honored here.');
+  }
+  await normalizePackageJson(options);
+  const hasSrcDir = await fs.pathExists(path.join(options.targetDir, 'src'));
+  await generateEnterpriseStructure(options, warnings, { baseDir: hasSrcDir ? 'src' : '.' });
+  if (options.database !== 'none') {
+    await applyDatabase(options, warnings, { modelsDir: modelsDirFor(options, hasSrcDir ? 'src' : '.') });
+  }
+  // create-hono's nodejs template already lists eslint/prettier/typescript-eslint
+  // in package.json (but ships no config file at all) — reinstalling those
+  // exact packages collides with npm's dependency resolution, so only the
+  // config-writing half of applyQuality runs for eslint-prettier.
+  await applyQuality(options, warnings, { depsAlreadyPresent: true });
+  if (options.docker) {
+    await applyDocker(options, warnings, {
+      flavor: 'node',
+      buildCommand: undefined,
+      startCommand: 'npm start',
+      port: 3000,
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Desktop                                                              */
+/* ------------------------------------------------------------------ */
+
+const TAURI_TEMPLATE = { ts: 'vanilla-ts', js: 'vanilla' };
+const ELECTRON_TEMPLATE = { ts: 'vite-typescript', js: 'vite' };
+
+async function runTauriCreate(options) {
+  const { pm, language, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  await runScaffolder({
+    label: 'Scaffolding Tauri app with create-tauri-app...',
+    success: 'Tauri app scaffolded.',
+    command: 'npx',
+    args: [
+      'create-tauri-app@latest',
+      dirArg,
+      '--manager',
+      pm,
+      '--template',
+      TAURI_TEMPLATE[language],
+      '--yes',
+    ],
+    cwd,
+    expectFile: path.join(targetDir, 'src-tauri', 'Cargo.toml'),
+  });
+}
+
+async function runElectronCreate(options) {
+  const { language, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  await runScaffolder({
+    label: 'Scaffolding Electron app with Electron Forge...',
+    success: 'Electron app scaffolded.',
+    command: 'npx',
+    args: ['create-electron-app@latest', dirArg, `--template=${ELECTRON_TEMPLATE[language]}`, '--skip-git'],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function handleDesktop(options, warnings) {
+  const { framework } = options;
+
+  if (framework === 'tauri') await runTauriCreate(options);
+  else await runElectronCreate(options);
+
+  // Neither create-tauri-app nor Electron Forge's initializer exposes a
+  // "skip install" flag — both always install dependencies as part of
+  // scaffolding, so --no-install can't be honored for this category. Any
+  // styling/quality tooling added afterward still respects the user's real
+  // options.install (merge-only when false, same as every other category) —
+  // a normal final `npm install` covers it when the user did ask for one.
+  if (!options.install) {
+    warnings.push(
+      `${framework === 'tauri' ? 'create-tauri-app' : 'Electron Forge'} always installs dependencies during scaffolding — --no-install could not be honored here.`
+    );
+  }
+
+  await normalizePackageJson(options);
+
+  if (framework === 'tauri') {
+    await applyStyling(options, warnings);
+  } else if (options.styling !== 'none') {
+    warnings.push(`${options.styling} was not auto-wired for Electron — see the project's vite.renderer.config for manual setup.`);
+  }
+
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
+
+  // Electron Forge's template ships a complete, working legacy ESLint 8
+  // setup (.eslintrc.json + @typescript-eslint/eslint-plugin+parser@5) —
+  // layering our modern ESLint 9 flat-config + unified typescript-eslint@8
+  // package on top doesn't just duplicate it, the two require incompatible
+  // major ESLint versions and conflict outright. Tauri ships no such thing,
+  // so it always gets the normal generic setup.
+  if (framework === 'electron' && options.quality === 'eslint-prettier') {
+    warnings.push('Electron Forge already ships its own ESLint config (.eslintrc.json); nothing further was needed.');
+  } else if (framework === 'electron' && options.quality === 'biome') {
+    await applyQuality(options, warnings);
+    warnings.push(
+      'Electron Forge also ships its own ESLint config (.eslintrc.json) — remove it if you want Biome to be the only linter.'
+    );
+  } else if (framework === 'electron' && options.quality === 'none') {
+    warnings.push('Electron Forge always includes its own ESLint config (.eslintrc.json); there is no flag to omit it.');
+  } else {
+    await applyQuality(options, warnings);
+  }
+
+  if (options.docker) {
+    warnings.push('Docker support was skipped — desktop apps run natively and are not typically containerized.');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Mobile                                                               */
+/* ------------------------------------------------------------------ */
+
+const EXPO_CREATE_ARGS = {
+  npm: ['create-expo-app@latest'],
+  yarn: ['create', 'expo-app'],
+  pnpm: ['create', 'expo-app'],
+  bun: ['create', 'expo-app'],
+};
+
+async function runExpoCreate(options) {
+  const { pm, language, install, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  const flags = ['--template', language === 'ts' ? 'blank-typescript' : 'blank', '--yes'];
+  if (!install) flags.push('--no-install');
+
+  const command = pm === 'npm' ? 'npx' : pm;
+  const args = pm === 'npm' ? [...EXPO_CREATE_ARGS.npm, dirArg, ...flags] : [...EXPO_CREATE_ARGS[pm], dirArg, ...flags];
+
+  await runScaffolder({
+    label: 'Scaffolding Expo app with create-expo-app...',
+    success: 'Expo app scaffolded.',
+    command,
+    args,
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function handleMobile(options, warnings) {
+  await runExpoCreate(options);
+  await normalizePackageJson(options);
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
+  await applyQuality(options, warnings);
+
+  if (options.docker) {
+    warnings.push('Docker support was skipped — Expo apps run on-device/in-simulator and are not typically containerized.');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Entry point                                                         */
+/* ------------------------------------------------------------------ */
+
+const HANDLERS = {
+  frontend: handleFrontend,
+  fullstack: handleFullstack,
+  backend: handleBackend,
+  desktop: handleDesktop,
+  mobile: handleMobile,
+};
+
+/**
+ * Orchestrates the whole scaffold: dispatches to the category handler for
+ * options.projectType, which runs the official initializer for the chosen
+ * framework (or, for Express/Fastify, writes one by hand) and layers the
+ * selected extras on top. Returns non-fatal `warnings` for the final summary.
+ */
+export async function scaffoldProject(options) {
+  const warnings = [];
+  const handler = HANDLERS[options.projectType];
+  if (!handler) throw new Error(`Unknown project type: ${options.projectType}`);
+
+  await handler(options, warnings);
 
   return { warnings };
 }

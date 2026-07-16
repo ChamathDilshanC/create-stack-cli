@@ -7,18 +7,72 @@ on:
     branches: [main]
 
 jobs:
-  test-templates:
+  test-stacks:
     strategy:
       fail-fast: false
       matrix:
-        template:
-          - react-ts
-          - react-js
-          - vue-ts
-          - vue-js
-          - vanilla-ts
-          - vanilla-js
-          - angular-ts
+        include:
+          # Frontend
+          - name: react-ts
+            args: --type frontend -f react -l ts -s tailwind -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          - name: vue-js
+            args: --type frontend -f vue -l js -s tailwind -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          - name: svelte-ts
+            args: --type frontend -f svelte -l ts -s unocss -q biome
+            hasBuild: true
+            lint: biome
+          - name: solid-ts
+            args: --type frontend -f solid -l ts -s css-modules -q none
+            hasBuild: true
+            lint: none
+          - name: angular-ts
+            args: --type frontend -f angular -s tailwind -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          # Fullstack
+          - name: next-ts
+            args: --type fullstack -f next -l ts -s tailwind -d prisma -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          - name: nuxt-ts
+            args: --type fullstack -f nuxt -l ts -s tailwind -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          - name: sveltekit-ts
+            args: --type fullstack -f sveltekit -l ts -s tailwind -d drizzle -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          - name: astro-ts
+            args: --type fullstack -f astro -l ts -s tailwind -d mongoose -q eslint-prettier
+            hasBuild: true
+            lint: eslint
+          # Backend
+          - name: express-ts
+            args: --type backend -f express -l ts -d drizzle -q eslint-prettier --docker
+            hasBuild: true
+            lint: eslint
+          - name: fastify-js
+            args: --type backend -f fastify -l js -d mongoose -q biome
+            hasBuild: false
+            lint: biome
+          - name: nestjs
+            args: --type backend -f nestjs -d prisma -q eslint-prettier --docker
+            hasBuild: true
+            lint: eslint
+          - name: hono-ts
+            args: --type backend -f hono -l ts -q none
+            hasBuild: true
+            lint: none
+          # Mobile — no npm "build" script (EAS Build is a separate, external
+          # step this CI can't run), so only scaffold/install/lint apply.
+          - name: expo-ts
+            args: --type mobile -f expo -l ts -q eslint-prettier
+            hasBuild: false
+            lint: eslint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,11 +83,10 @@ jobs:
 
       - run: npm ci
 
-      - name: Scaffold ${{ matrix.template }}
+      - name: Scaffold ${{ matrix.name }}
         run: >
           node bin/cli.js /tmp/test-app
-          --template ${{ matrix.template }}
-          --extras tailwind,eslint,prettier
+          ${{ matrix.args }}
           --pm npm
           --no-install
           --yes
@@ -42,16 +95,51 @@ jobs:
         working-directory: /tmp/test-app
         run: npm install
 
-      - name: Lint generated project
+      - name: Lint generated project (eslint)
+        if: matrix.lint == 'eslint'
         working-directory: /tmp/test-app
         run: npx eslint .
 
+      - name: Lint generated project (biome)
+        if: matrix.lint == 'biome'
+        working-directory: /tmp/test-app
+        run: npx biome check .
+
       - name: Build generated project
+        if: matrix.hasBuild
         working-directory: /tmp/test-app
         run: npm run build
 
+  # Desktop (Tauri/Electron) needs a Rust toolchain and Linux GUI libraries
+  # (webkit2gtk etc.) that standard runners don't ship — this only verifies
+  # the scaffold + package.json land correctly, not a full native build.
+  test-desktop-scaffold:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: tauri-ts
+            args: --type desktop -f tauri -l ts -s tailwind -q eslint-prettier
+          - name: electron-ts
+            args: --type desktop -f electron -l ts -q eslint-prettier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Scaffold ${{ matrix.name }}
+        run: node bin/cli.js /tmp/test-desktop ${{ matrix.args }} --pm npm --yes
+
+      - name: Verify package.json exists
+        run: test -f /tmp/test-desktop/package.json
+
   release:
-    needs: test-templates
+    needs: [test-stacks, test-desktop-scaffold]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

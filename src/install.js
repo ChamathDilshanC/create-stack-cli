@@ -2,7 +2,7 @@ import { execa } from 'execa';
 import ora from 'ora';
 import pc from 'picocolors';
 
-import { commandOutputTail, logger } from './utils.js';
+import { commandOutputTail, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
 const SUPPORTED = new Set(['npm', 'yarn', 'pnpm', 'bun']);
 
@@ -22,10 +22,10 @@ export async function installDependencies(targetDir, pm) {
   const spinner = ora(`Installing dependencies with ${pm}...`).start();
   try {
     await execa(pm, ['install'], { cwd: targetDir, stdin: 'ignore' });
-    spinner.succeed('Dependencies installed.');
+    spinnerSucceed(spinner, 'Dependencies installed.');
     return true;
   } catch (err) {
-    spinner.fail(`Failed to install dependencies with ${pm}.`);
+    spinnerFail(spinner, `Failed to install dependencies with ${pm}.`);
     const tail = commandOutputTail(err);
     if (tail) logger.dim(tail);
     logger.warn(

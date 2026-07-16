@@ -79,6 +79,21 @@ export function detectPackageManager() {
 }
 
 /**
+ * ora's ✔/✖ (U+2714/U+2718) are "ambiguous width" in Unicode — plenty of
+ * terminal/font combinations (several Windows setups included) render them
+ * two columns wide, which eats the single space ora inserts afterward and
+ * glues the symbol straight onto the text. ora's own spacing is correct; this
+ * just adds a second buffer space so a swallowed column still leaves a gap.
+ */
+export function spinnerSucceed(spinner, text) {
+  spinner.succeed(` ${text}`);
+}
+
+export function spinnerFail(spinner, text) {
+  spinner.fail(` ${text}`);
+}
+
+/**
  * Extracts the most useful lines from a failed execa command, so errors stay
  * readable instead of dumping an entire npm log at the user.
  */

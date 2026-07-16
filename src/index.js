@@ -6,7 +6,15 @@ import pc from 'picocolors';
 import prompts from 'prompts';
 
 import { printBanner } from './banner.js';
-import { FRAMEWORKS, EXTRAS, PACKAGE_MANAGERS, getProjectOptions } from './prompts.js';
+import {
+  DATABASE_OPTIONS,
+  FRAMEWORKS,
+  PACKAGE_MANAGERS,
+  PROJECT_TYPES,
+  QUALITY_OPTIONS,
+  STYLING_OPTIONS,
+  getProjectOptions,
+} from './prompts.js';
 import { scaffoldProject } from './scaffold.js';
 import { installDependencies } from './install.js';
 import {
@@ -20,22 +28,28 @@ import {
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
 
-const ALL_VARIANTS = FRAMEWORKS.flatMap((f) => f.variants);
-const EXTRA_VALUES = new Set(EXTRAS.map((e) => e.value));
+const PROJECT_TYPE_VALUES = PROJECT_TYPES.map((t) => t.value);
+const STYLING_VALUES = new Set(STYLING_OPTIONS.map((s) => s.value));
+const DATABASE_VALUES = new Set(DATABASE_OPTIONS.map((d) => d.value));
+const QUALITY_VALUES = new Set(QUALITY_OPTIONS.map((q) => q.value));
 
 function parseArgs() {
   const program = new Command();
 
   program
     .name('create-stack')
-    .description('Universal, interactive project scaffolder for React, Vue, Angular, and Vanilla apps.')
+    .description(
+      'Ultimate multi-tiered project orchestrator — Frontend, Fullstack, Backend, Desktop, and Mobile, scaffolded with each stack\'s own official tooling.'
+    )
     .version(pkg.version)
     .argument('[project-directory]', 'directory to create the project in')
-    .option(
-      '-t, --template <name>',
-      `template to use (${ALL_VARIANTS.map((v) => v.name).join(', ')})`
-    )
-    .option('-e, --extras <list>', `comma-separated extras (${[...EXTRA_VALUES].join(', ')})`)
+    .option('--type <type>', `project type (${PROJECT_TYPE_VALUES.join(', ')})`)
+    .option('-f, --framework <name>', 'framework within the chosen type')
+    .option('-l, --language <lang>', 'ts or js')
+    .option('-s, --styling <name>', `styling (${[...STYLING_VALUES].join(', ')})`)
+    .option('-d, --database <name>', `database/ORM (${[...DATABASE_VALUES].join(', ')})`)
+    .option('-q, --quality <name>', `code quality tooling (${[...QUALITY_VALUES].join(', ')})`)
+    .option('--docker', 'add a Dockerfile + docker-compose.yml')
     .option('-p, --pm <manager>', `package manager (${PACKAGE_MANAGERS.join(', ')})`)
     .option('--no-install', 'skip automatic dependency installation')
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
@@ -48,15 +62,19 @@ function parseArgs() {
 
   return {
     projectDirectory,
-    template: opts.template,
-    extras: opts.extras,
+    type: opts.type,
+    framework: opts.framework,
+    language: opts.language,
+    styling: opts.styling,
+    database: opts.database,
+    quality: opts.quality,
+    docker: opts.docker,
     pm: opts.pm,
     overwrite: Boolean(opts.overwrite),
     yes: Boolean(opts.yes),
     // Commander gives --no-install a default of `true`; only trust it when
     // the flag was actually passed on the command line.
-    install:
-      program.getOptionValueSource('install') === 'cli' ? opts.install : undefined,
+    install: program.getOptionValueSource('install') === 'cli' ? opts.install : undefined,
   };
 }
 
@@ -65,30 +83,55 @@ function buildPreset(cli) {
 
   if (cli.projectDirectory) preset.projectName = cli.projectDirectory;
 
-  if (cli.template) {
-    const variantDef = ALL_VARIANTS.find((v) => v.name === cli.template);
-    if (!variantDef) {
-      throw new Error(
-        `Unknown template "${cli.template}". Available: ${ALL_VARIANTS.map((v) => v.name).join(', ')}`
-      );
+  if (cli.type) {
+    if (!PROJECT_TYPE_VALUES.includes(cli.type)) {
+      throw new Error(`Unknown --type "${cli.type}". Available: ${PROJECT_TYPE_VALUES.join(', ')}`);
     }
-    preset.framework = variantDef.framework;
-    preset.variant = variantDef.name;
+    preset.projectType = cli.type;
   }
 
-  if (cli.extras !== undefined) {
-    preset.extras = cli.extras
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .filter((e) => {
-        if (!EXTRA_VALUES.has(e)) {
-          logger.warn(`Ignoring unknown extra "${e}".`);
-          return false;
-        }
-        return true;
-      });
+  if (cli.framework) {
+    if (!preset.projectType) {
+      throw new Error('--framework requires --type to be set first.');
+    }
+    const frameworkDef = FRAMEWORKS[preset.projectType].find((f) => f.value === cli.framework);
+    if (!frameworkDef) {
+      throw new Error(
+        `Unknown --framework "${cli.framework}" for type "${preset.projectType}". Available: ${FRAMEWORKS[preset.projectType].map((f) => f.value).join(', ')}`
+      );
+    }
+    preset.framework = frameworkDef.value;
   }
+
+  if (cli.language) {
+    if (!['ts', 'js'].includes(cli.language)) {
+      throw new Error(`Unknown --language "${cli.language}". Available: ts, js`);
+    }
+    preset.language = cli.language;
+  }
+
+  if (cli.styling) {
+    if (!STYLING_VALUES.has(cli.styling)) {
+      throw new Error(`Unknown --styling "${cli.styling}". Available: ${[...STYLING_VALUES].join(', ')}`);
+    }
+    preset.styling = cli.styling;
+  }
+
+  if (cli.database) {
+    if (!DATABASE_VALUES.has(cli.database)) {
+      throw new Error(`Unknown --database "${cli.database}". Available: ${[...DATABASE_VALUES].join(', ')}`);
+    }
+    preset.database = cli.database;
+  }
+
+  if (cli.quality) {
+    if (!QUALITY_VALUES.has(cli.quality)) {
+      throw new Error(`Unknown --quality "${cli.quality}". Available: ${[...QUALITY_VALUES].join(', ')}`);
+    }
+    preset.quality = cli.quality;
+  }
+
+  if (cli.docker !== undefined) preset.docker = Boolean(cli.docker);
 
   if (cli.pm) {
     if (!PACKAGE_MANAGERS.includes(cli.pm)) {
@@ -104,15 +147,19 @@ function buildPreset(cli) {
 
 function assertNonInteractiveComplete(preset, cli) {
   if (!cli.yes) return;
-  const missing = ['projectName', 'framework', 'variant', 'pm'].filter(
-    (key) => preset[key] === undefined
-  );
+  const missing = ['projectName', 'projectType', 'framework', 'pm'].filter((key) => preset[key] === undefined);
   if (missing.length > 0) {
     throw new Error(
       `--yes was passed but the following are missing: ${missing.join(', ')}. Provide them via flags.`
     );
   }
-  if (preset.extras === undefined) preset.extras = [];
+  // language may be legitimately unset for TS-forced frameworks (Angular,
+  // NestJS) — getProjectOptions resolves those on its own either way.
+  if (preset.language === undefined) preset.language = 'ts';
+  if (preset.styling === undefined) preset.styling = 'none';
+  if (preset.database === undefined) preset.database = 'none';
+  if (preset.quality === undefined) preset.quality = 'none';
+  if (preset.docker === undefined) preset.docker = false;
   if (preset.install === undefined) preset.install = true;
 }
 
@@ -144,6 +191,19 @@ async function confirmOverwrite(targetDir, cli) {
   emptyDir(targetDir);
 }
 
+/** The command that actually starts the dev server, per framework's own convention. */
+function devCommand(options) {
+  const { framework, projectType, pm } = options;
+  const runPrefix = pm === 'npm' ? 'npm run' : pm;
+
+  if (projectType === 'mobile') return 'npx expo start';
+  if (framework === 'tauri') return `${runPrefix} tauri dev`;
+  if (framework === 'electron') return pm === 'npm' ? 'npm start' : `${pm} start`;
+  if (framework === 'angular') return `${runPrefix} start`;
+  if (framework === 'nestjs') return `${runPrefix} start:dev`;
+  return `${runPrefix} dev`;
+}
+
 function printSummary(options, { targetDir, cwd, installed, warnings }) {
   const relativeDir = path.relative(cwd, targetDir) || '.';
 
@@ -152,13 +212,14 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
     steps.push(`cd ${/\s/.test(relativeDir) ? `"${relativeDir}"` : relativeDir}`);
   }
   if (!installed) steps.push(`${options.pm} install`);
-  // The Angular CLI wires `start` (ng serve); the Vite templates wire `dev`.
-  const devScript = options.framework === 'angular' ? 'start' : 'dev';
-  steps.push(options.pm === 'npm' ? `npm run ${devScript}` : `${options.pm} ${devScript}`);
+  steps.push(devCommand(options));
 
   const lines = [
-    `${pc.green('✔')} ${pc.bold(`${options.packageName} is ready!`)}`,
+    // Two spaces, not one: ✔ (U+2714) renders full-width in some terminal
+    // fonts, which eats a single following space and glues the text on.
+    `${pc.green('✔')}  ${pc.bold(`${options.packageName} is ready!`)}`,
     pc.dim(targetDir),
+    pc.dim(`${options.projectType} · ${options.framework} · ${options.language === 'ts' ? 'TypeScript' : 'JavaScript'}`),
     '',
     pc.bold('Next steps'),
     ...steps.map((step, i) => `  ${pc.dim(`${i + 1}.`)} ${pc.cyan(step)}`),
@@ -200,6 +261,11 @@ async function main() {
   console.log();
   const { warnings } = await scaffoldProject(options);
 
+  // Tauri/Electron/create-hono make some network install activity of their
+  // own regardless of --no-install (each warns about that individually when
+  // relevant), but none of them reliably finish installing everything this
+  // CLI subsequently adds to package.json — so this final pass always runs
+  // when the user asked for one, the same as every other project type.
   let installed = false;
   if (options.install) {
     installed = await installDependencies(targetDir, options.pm);
