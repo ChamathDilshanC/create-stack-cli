@@ -4,13 +4,14 @@ A universal, interactive project scaffolder CLI — like `create-vite` or `creat
 
 ## Features
 
+- **Official scaffolders, not static templates** — React, Vue, and Vanilla projects come from `create-vite`; Angular projects come from the Angular CLI (`ng new`). Generated projects are always current, never stale copies.
 - **Interactive prompts** for project name, framework, language, extras, and package manager
 - **Frameworks:** React, Vue, Angular, Vanilla
 - **Languages:** TypeScript or JavaScript (Angular is TypeScript-only)
-- **Extras:** Tailwind CSS, ESLint, Prettier — wired into the generated project automatically
+- **Extras:** Tailwind CSS v4 (official Vite-plugin / PostCSS setup), ESLint, Prettier — wired into the generated project automatically
 - **Auto-installs dependencies** with your package manager of choice: npm, yarn, pnpm, or bun
 - **Non-interactive mode** via CLI flags, for scripting and CI
-- Graceful handling of existing directories and Ctrl+C cancellation — no unhandled promise rejections
+- Graceful handling of existing directories, network failures during install, and Ctrl+C cancellation — no unhandled promise rejections
 
 ## Quick start
 
@@ -64,19 +65,27 @@ create-stack-cli/
 ├── bin/
 │   └── cli.js              # Shebang entry point
 ├── src/
-│   ├── index.js             # CLI parsing + orchestration
+│   ├── index.js             # CLI parsing + main flow + summary
+│   ├── banner.js             # Startup banner (boxen + picocolors)
 │   ├── prompts.js            # Interactive prompt flow
-│   ├── scaffold.js           # Template copying + extras (Tailwind/ESLint/Prettier) wiring
+│   ├── scaffold.js           # Orchestrator: create-vite / ng new + Tailwind/ESLint/Prettier wiring
+│   ├── starters.js           # Tailwind-styled starter components written during setup
 │   ├── install.js            # Dependency installation (execa + ora spinner)
 │   └── utils.js              # Logger, validators, package-manager detection
-├── templates/
-│   ├── react-ts/ react-js/
-│   ├── vue-ts/   vue-js/
-│   ├── angular-ts/
-│   └── vanilla-ts/ vanilla-js/
 ├── package.json
 └── README.md
 ```
+
+## How scaffolding works
+
+There are no template folders. The CLI orchestrates the official tooling end to end:
+
+1. **Project creation** — `npm create vite@latest <dir> -- --template <react|react-ts|vue|vue-ts|vanilla|vanilla-ts> --no-interactive` (or `yarn`/`pnpm`/`bun create vite`). Angular runs `npm init @angular@latest` (`ng new`) with `--defaults --skip-git --skip-install`.
+2. **Tailwind CSS v4** — installs `tailwindcss` + `@tailwindcss/vite` (Angular: `@tailwindcss/postcss` + `postcss`) with your package manager, injects the plugin into the generated `vite.config` (or writes `.postcssrc.json` for Angular), replaces the CSS entry with `@import "tailwindcss";`, and rewrites the starter component with Tailwind utility classes. Tailwind v4 detects content automatically, so no `tailwind.config.js` is generated — that's the official setup.
+3. **ESLint** — React projects use create-vite's official `--eslint` switch; other frameworks get a generated flat config.
+4. **Prettier** — writes `.prettierrc.json` / `.prettierignore` and adds the dependency.
+
+If a network step fails (e.g. installing Tailwind offline), the CLI records the dependency in `package.json`, finishes every filesystem step, and tells you exactly which command to run later — it never leaves you with a half-broken directory and a stack trace.
 
 ## Development
 

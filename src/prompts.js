@@ -11,7 +11,9 @@ import {
 
 /**
  * Frameworks and the language variants each one supports.
- * Angular is TypeScript-only, matching how the Angular CLI itself works.
+ * `viteTemplate` is the official create-vite template the variant maps to;
+ * Angular has none — it is scaffolded with the Angular CLI (`ng new`) instead,
+ * and is TypeScript-only, matching how the Angular CLI itself works.
  */
 export const FRAMEWORKS = [
   {
@@ -19,8 +21,8 @@ export const FRAMEWORKS = [
     display: 'React',
     color: pc.cyan,
     variants: [
-      { name: 'react-ts', display: 'TypeScript', framework: 'react', language: 'ts' },
-      { name: 'react-js', display: 'JavaScript', framework: 'react', language: 'js' },
+      { name: 'react-ts', display: 'TypeScript', framework: 'react', language: 'ts', viteTemplate: 'react-ts' },
+      { name: 'react-js', display: 'JavaScript', framework: 'react', language: 'js', viteTemplate: 'react' },
     ],
   },
   {
@@ -28,8 +30,8 @@ export const FRAMEWORKS = [
     display: 'Vue',
     color: pc.green,
     variants: [
-      { name: 'vue-ts', display: 'TypeScript', framework: 'vue', language: 'ts' },
-      { name: 'vue-js', display: 'JavaScript', framework: 'vue', language: 'js' },
+      { name: 'vue-ts', display: 'TypeScript', framework: 'vue', language: 'ts', viteTemplate: 'vue-ts' },
+      { name: 'vue-js', display: 'JavaScript', framework: 'vue', language: 'js', viteTemplate: 'vue' },
     ],
   },
   {
@@ -45,8 +47,8 @@ export const FRAMEWORKS = [
     display: 'Vanilla',
     color: pc.yellow,
     variants: [
-      { name: 'vanilla-ts', display: 'TypeScript', framework: 'vanilla', language: 'ts' },
-      { name: 'vanilla-js', display: 'JavaScript', framework: 'vanilla', language: 'js' },
+      { name: 'vanilla-ts', display: 'TypeScript', framework: 'vanilla', language: 'ts', viteTemplate: 'vanilla-ts' },
+      { name: 'vanilla-js', display: 'JavaScript', framework: 'vanilla', language: 'js', viteTemplate: 'vanilla' },
     ],
   },
 ];
@@ -154,6 +156,7 @@ export async function getProjectOptions(preset = {}) {
     throw new Error(`Unknown variant: ${result.variant}`);
   }
   result.language = variantDef.language;
+  result.viteTemplate = variantDef.viteTemplate;
 
   // 4. Extras.
   if (!result.extras) {

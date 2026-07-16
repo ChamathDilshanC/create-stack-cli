@@ -18,11 +18,10 @@
   },
   "files": [
     "bin",
-    "src",
-    "templates"
+    "src"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19.0"
   },
   "publishConfig": {
     "access": "public",

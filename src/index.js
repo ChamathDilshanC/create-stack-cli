@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import boxen from 'boxen';
 import { Command } from 'commander';
 import pc from 'picocolors';
 import prompts from 'prompts';
 
 import { printBanner } from './banner.js';
 import { FRAMEWORKS, EXTRAS, PACKAGE_MANAGERS, getProjectOptions } from './prompts.js';
-import { scaffoldProject, templateExists } from './scaffold.js';
+import { scaffoldProject } from './scaffold.js';
 import { installDependencies } from './install.js';
 import {
   CancelledError,
@@ -143,15 +144,40 @@ async function confirmOverwrite(targetDir, cli) {
   emptyDir(targetDir);
 }
 
-function printNextSteps(options, targetDir, cwd) {
+function printSummary(options, { targetDir, cwd, installed, warnings }) {
   const relativeDir = path.relative(cwd, targetDir) || '.';
-  const cdInstruction = relativeDir === '.' ? '' : `  cd ${relativeDir}\n`;
-  const runPrefix = options.pm === 'npm' ? 'npm run' : options.pm;
 
-  logger.success(`\nDone! Created ${options.packageName} at ${targetDir}\n`);
-  logger.title('Next steps:');
+  const steps = [];
+  if (relativeDir !== '.') {
+    steps.push(`cd ${/\s/.test(relativeDir) ? `"${relativeDir}"` : relativeDir}`);
+  }
+  if (!installed) steps.push(`${options.pm} install`);
+  // The Angular CLI wires `start` (ng serve); the Vite templates wire `dev`.
+  const devScript = options.framework === 'angular' ? 'start' : 'dev';
+  steps.push(options.pm === 'npm' ? `npm run ${devScript}` : `${options.pm} ${devScript}`);
+
+  const lines = [
+    `${pc.green('✔')} ${pc.bold(`${options.packageName} is ready!`)}`,
+    pc.dim(targetDir),
+    '',
+    pc.bold('Next steps'),
+    ...steps.map((step, i) => `  ${pc.dim(`${i + 1}.`)} ${pc.cyan(step)}`),
+  ];
+
+  if (warnings.length > 0) {
+    lines.push('', pc.bold(pc.yellow('Heads up')));
+    for (const warning of warnings) {
+      lines.push(`  ${pc.yellow('!')} ${warning}`);
+    }
+  }
+
   console.log(
-    `${cdInstruction}${options.install ? '' : `  ${options.pm} install\n`}  ${runPrefix} dev\n`
+    boxen(lines.join('\n'), {
+      padding: 1,
+      margin: { top: 1, bottom: 1, left: 0, right: 0 },
+      borderStyle: 'round',
+      borderColor: warnings.length > 0 ? 'yellow' : 'green',
+    })
   );
 }
 
@@ -164,10 +190,6 @@ async function main() {
 
   const options = await getProjectOptions(preset);
 
-  if (!templateExists(options.variant)) {
-    throw new Error(`No template found for "${options.variant}".`);
-  }
-
   const cwd = process.cwd();
   const targetDir = path.resolve(cwd, formatTargetDir(options.projectName));
 
@@ -175,15 +197,15 @@ async function main() {
 
   options.targetDir = targetDir;
 
-  logger.title(`\nScaffolding ${options.variant} project in ${targetDir}...`);
-  await scaffoldProject(options);
-  logger.success('Project files created.');
+  console.log();
+  const { warnings } = await scaffoldProject(options);
 
+  let installed = false;
   if (options.install) {
-    await installDependencies(targetDir, options.pm);
+    installed = await installDependencies(targetDir, options.pm);
   }
 
-  printNextSteps(options, targetDir, cwd);
+  printSummary(options, { targetDir, cwd, installed, warnings });
 }
 
 export async function run() {

@@ -77,3 +77,20 @@ export function pkgInfoFromUserAgent(userAgent = process.env.npm_config_user_age
 export function detectPackageManager() {
   return pkgInfoFromUserAgent()?.name ?? 'npm';
 }
+
+/**
+ * Extracts the most useful lines from a failed execa command, so errors stay
+ * readable instead of dumping an entire npm log at the user.
+ */
+export function commandOutputTail(err, maxLines = 8) {
+  const output = [err.stderr, err.stdout]
+    .filter((stream) => typeof stream === 'string' && stream.trim())
+    .join('\n');
+  if (!output) return err.shortMessage ?? err.message ?? '';
+
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .slice(-maxLines)
+    .join('\n');
+}
