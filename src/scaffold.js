@@ -248,7 +248,12 @@ async function handleFullstack(options, warnings) {
   // an empty src/pages/ from the generic structure list still trips Next's
   // "pages and app must be siblings" build-time validation, since it checks
   // the folder's mere existence, not whether it holds real page files.
-  const structureExclude = framework === 'next' ? ['pages'] : [];
+  // Nuxt has the opposite problem: an empty app/pages/ doesn't fail the
+  // build, but its mere presence auto-enables Nuxt's file-based router —
+  // and since the starter app.vue renders its own content directly (no
+  // <NuxtPage />), Vue Router ends up trying to match "/" against zero
+  // page components and throws VUE_ROUTER_R0004 in the browser console.
+  const structureExclude = framework === 'next' || framework === 'nuxt' ? ['pages'] : [];
   await generateEnterpriseStructure(options, warnings, { baseDir: fullstackBaseDir, exclude: structureExclude });
 
   if (options.docker) {
