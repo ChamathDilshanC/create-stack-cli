@@ -797,11 +797,22 @@ const EXPO_CREATE_ARGS = {
   bun: ['create', 'expo-app'],
 };
 
+// Pinned deliberately, not left on create-expo-app's own bleeding-edge
+// default: the Expo Go app on the App Store/Play Store lags several weeks
+// behind each new SDK release (expo/expo#43699, expo/expo#46846). Scaffolding
+// straight off the newest SDK routinely produces a project that fails on a
+// real phone with "Project is incompatible with this version of Expo Go" the
+// moment someone runs `npx expo start`, since most users test through the
+// Expo Go app rather than a custom dev client. Bump this once Expo Go on both
+// stores has caught up to a newer SDK.
+const EXPO_GO_COMPATIBLE_SDK = 'sdk-54';
+
 async function runExpoCreate(options) {
   const { pm, language, install, targetDir } = options;
   const { cwd, dirArg } = await scaffolderInvocation(targetDir);
 
-  const flags = ['--template', language === 'ts' ? 'blank-typescript' : 'blank', '--yes'];
+  const template = `${language === 'ts' ? 'blank-typescript' : 'blank'}@${EXPO_GO_COMPATIBLE_SDK}`;
+  const flags = ['--template', template, '--yes'];
   if (!install) flags.push('--no-install');
 
   const command = pm === 'npm' ? 'npx' : pm;
@@ -822,6 +833,10 @@ async function handleMobile(options, warnings) {
   await normalizePackageJson(options);
   await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
   await applyQuality(options, warnings);
+
+  warnings.push(
+    `Scaffolded on Expo ${EXPO_GO_COMPATIBLE_SDK.replace('sdk-', 'SDK ')} for Expo Go compatibility — the Expo Go app on your phone usually lags a few weeks behind the newest SDK. To move to the latest SDK instead (only if your Expo Go app supports it), run "npx expo install expo@latest" followed by "npx expo install --fix".`
+  );
 
   if (options.docker) {
     warnings.push('Docker support was skipped — Expo apps run on-device/in-simulator and are not typically containerized.');
