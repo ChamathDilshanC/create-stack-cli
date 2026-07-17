@@ -1,3 +1,10 @@
+# [3.1.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.0.0...v3.1.0) (2026-07-17)
+
+
+### Features
+
+* implement SQLAlchemy support and fix Next.js/Drizzle scaffold bugs ([6b2f489](https://github.com/ChamathDilshanC/create-stack-cli/commit/6b2f4891ff91817a78285e9ab447d24ab50a6e7b))
+
 # [3.0.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v2.0.0...v3.0.0) (2026-07-16)
 
 
