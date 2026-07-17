@@ -44,11 +44,12 @@ export function modelsDirFor(options, baseDir = 'src') {
  * one of these path segments, a permissions error — is reported as a
  * warning rather than unwinding a scaffold that has otherwise succeeded.
  */
-export async function generateEnterpriseStructure(options, warnings, { baseDir = 'src' } = {}) {
+export async function generateEnterpriseStructure(options, warnings, { baseDir = 'src', exclude = [] } = {}) {
   const spinner = ora({ text: 'Generating enterprise folder structure...', indent: 2 }).start();
   const rootDir = path.join(options.targetDir, baseDir);
-  const directories =
+  const allDirectories =
     options.projectType === 'backend' ? backendDirectories(options.database) : FRONTEND_DIRECTORIES;
+  const directories = allDirectories.filter((dir) => !exclude.includes(dir));
 
   try {
     for (const rel of directories) {

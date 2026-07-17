@@ -5,7 +5,7 @@ import ora from 'ora';
 
 import { applyDatabase } from './database.js';
 import { applyDocker } from './docker.js';
-import { applyEnvFiles } from './env.js';
+import { appendEnvVars, applyEnvFiles } from './env.js';
 import { applyQuality } from './quality.js';
 import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
 import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
@@ -244,7 +244,12 @@ async function handleFullstack(options, warnings) {
   // instead of creating a second, unused src/ alongside it; the rest use
   // (or gain) a plain src/, which none of them otherwise occupy at root.
   const fullstackBaseDir = { nuxt: 'app' }[framework] ?? 'src';
-  await generateEnterpriseStructure(options, warnings, { baseDir: fullstackBaseDir });
+  // Next.js's App Router lives at the project root (app/), not under src/ —
+  // an empty src/pages/ from the generic structure list still trips Next's
+  // "pages and app must be siblings" build-time validation, since it checks
+  // the folder's mere existence, not whether it holds real page files.
+  const structureExclude = framework === 'next' ? ['pages'] : [];
+  await generateEnterpriseStructure(options, warnings, { baseDir: fullstackBaseDir, exclude: structureExclude });
 
   if (options.docker) {
     const nodeStart = { next: 'npm start', nuxt: 'node .output/server/index.mjs', astro: 'node ./dist/server/entry.mjs' };
@@ -598,6 +603,9 @@ async function handleManualPythonBackend(options, warnings, kind) {
   await pipInstallOrRecord({ options, warnings, packages, label: kind === 'flask' ? 'Flask' : 'FastAPI', venvReady });
 
   await generateEnterpriseStructure(options, warnings, { baseDir: 'app' });
+  if (options.database === 'sqlalchemy') {
+    await applyPythonDatabase(options, warnings, venvReady);
+  }
   await applyPythonQuality(options, warnings, venvReady);
 
   if (options.docker) {
@@ -610,6 +618,47 @@ async function handleManualPythonBackend(options, warnings, kind) {
       port: kind === 'flask' ? 5000 : 8000,
     });
   }
+}
+
+const SQLALCHEMY_DATABASE_PY = `from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+DATABASE_URL = "sqlite:///./local.db"
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+`;
+
+const SQLALCHEMY_USER_MODEL_PY = `from sqlalchemy import Column, Integer, String
+
+from .database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=False)
+`;
+
+/**
+ * SQLAlchemy for Flask/FastAPI — Django always uses its own ORM instead
+ * (forced via forceDatabase in prompts.js, never reaches this function).
+ * Writes into the models/ folder generateEnterpriseStructure already
+ * created, same as database.js does for the Node frameworks.
+ */
+async function applyPythonDatabase(options, warnings, venvReady) {
+  const modelsDir = path.join(options.targetDir, 'app', 'models');
+  await pipInstallOrRecord({ options, warnings, packages: ['sqlalchemy'], label: 'SQLAlchemy', venvReady });
+
+  await fs.outputFile(path.join(modelsDir, '__init__.py'), '');
+  await fs.outputFile(path.join(modelsDir, 'database.py'), SQLALCHEMY_DATABASE_PY);
+  await fs.outputFile(path.join(modelsDir, 'user.py'), SQLALCHEMY_USER_MODEL_PY);
+
+  await appendEnvVars(options.targetDir, { DATABASE_URL: 'sqlite:///./local.db' }, { DATABASE_URL: 'REPLACE_WITH_PRODUCTION_DATABASE_URL' });
 }
 
 /** Ruff or Black+Flake8 — Python's equivalents of the Node quality.js path, kept local since none of it is Node-specific. */
