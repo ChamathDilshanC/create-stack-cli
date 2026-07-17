@@ -8,15 +8,18 @@ import prompts from 'prompts';
 import { printBanner } from './banner.js';
 import {
   DATABASE_OPTIONS,
+  DATABASE_OPTIONS_PYTHON,
   FRAMEWORKS,
   PACKAGE_MANAGERS,
   PROJECT_TYPES,
   QUALITY_OPTIONS,
+  QUALITY_OPTIONS_PYTHON,
   STYLING_OPTIONS,
   getProjectOptions,
 } from './prompts.js';
 import { scaffoldProject } from './scaffold.js';
 import { installDependencies } from './install.js';
+import { installPythonDependencies } from './python-utils.js';
 import {
   CancelledError,
   emptyDir,
@@ -31,7 +34,9 @@ const pkg = require('../package.json');
 const PROJECT_TYPE_VALUES = PROJECT_TYPES.map((t) => t.value);
 const STYLING_VALUES = new Set(STYLING_OPTIONS.map((s) => s.value));
 const DATABASE_VALUES = new Set(DATABASE_OPTIONS.map((d) => d.value));
+const DATABASE_VALUES_PYTHON = new Set(DATABASE_OPTIONS_PYTHON.map((d) => d.value));
 const QUALITY_VALUES = new Set(QUALITY_OPTIONS.map((q) => q.value));
+const QUALITY_VALUES_PYTHON = new Set(QUALITY_OPTIONS_PYTHON.map((q) => q.value));
 
 function parseArgs() {
   const program = new Command();
@@ -90,11 +95,12 @@ function buildPreset(cli) {
     preset.projectType = cli.type;
   }
 
+  let frameworkDef;
   if (cli.framework) {
     if (!preset.projectType) {
       throw new Error('--framework requires --type to be set first.');
     }
-    const frameworkDef = FRAMEWORKS[preset.projectType].find((f) => f.value === cli.framework);
+    frameworkDef = FRAMEWORKS[preset.projectType].find((f) => f.value === cli.framework);
     if (!frameworkDef) {
       throw new Error(
         `Unknown --framework "${cli.framework}" for type "${preset.projectType}". Available: ${FRAMEWORKS[preset.projectType].map((f) => f.value).join(', ')}`
@@ -102,8 +108,10 @@ function buildPreset(cli) {
     }
     preset.framework = frameworkDef.value;
   }
+  const isPython = frameworkDef?.runtime === 'python';
 
   if (cli.language) {
+    // Python frameworks force this themselves; only ts/js are ever user-choosable.
     if (!['ts', 'js'].includes(cli.language)) {
       throw new Error(`Unknown --language "${cli.language}". Available: ts, js`);
     }
@@ -118,15 +126,20 @@ function buildPreset(cli) {
   }
 
   if (cli.database) {
-    if (!DATABASE_VALUES.has(cli.database)) {
-      throw new Error(`Unknown --database "${cli.database}". Available: ${[...DATABASE_VALUES].join(', ')}`);
+    // When the framework isn't known yet (interactive framework pick, flag-
+    // driven database choice), accept either ecosystem's values and let
+    // getProjectOptions/the framework's own forceDatabase sort it out.
+    const validDatabase = frameworkDef ? (isPython ? DATABASE_VALUES_PYTHON : DATABASE_VALUES) : new Set([...DATABASE_VALUES, ...DATABASE_VALUES_PYTHON]);
+    if (!validDatabase.has(cli.database)) {
+      throw new Error(`Unknown --database "${cli.database}". Available: ${[...validDatabase].join(', ')}`);
     }
     preset.database = cli.database;
   }
 
   if (cli.quality) {
-    if (!QUALITY_VALUES.has(cli.quality)) {
-      throw new Error(`Unknown --quality "${cli.quality}". Available: ${[...QUALITY_VALUES].join(', ')}`);
+    const validQuality = frameworkDef ? (isPython ? QUALITY_VALUES_PYTHON : QUALITY_VALUES) : new Set([...QUALITY_VALUES, ...QUALITY_VALUES_PYTHON]);
+    if (!validQuality.has(cli.quality)) {
+      throw new Error(`Unknown --quality "${cli.quality}". Available: ${[...validQuality].join(', ')}`);
     }
     preset.quality = cli.quality;
   }
@@ -147,7 +160,14 @@ function buildPreset(cli) {
 
 function assertNonInteractiveComplete(preset, cli) {
   if (!cli.yes) return;
-  const missing = ['projectName', 'projectType', 'framework', 'pm'].filter((key) => preset[key] === undefined);
+  // Python frameworks force pm to 'pip' themselves (no npm-family package
+  // manager applies), so --yes shouldn't demand -p for them the way it does
+  // for everything else.
+  const frameworkDef = FRAMEWORKS[preset.projectType]?.find((f) => f.value === preset.framework);
+  const isPython = frameworkDef?.runtime === 'python';
+
+  const required = ['projectName', 'projectType', 'framework', ...(isPython ? [] : ['pm'])];
+  const missing = required.filter((key) => preset[key] === undefined);
   if (missing.length > 0) {
     throw new Error(
       `--yes was passed but the following are missing: ${missing.join(', ')}. Provide them via flags.`
@@ -157,10 +177,11 @@ function assertNonInteractiveComplete(preset, cli) {
   // NestJS) — getProjectOptions resolves those on its own either way.
   if (preset.language === undefined) preset.language = 'ts';
   if (preset.styling === undefined) preset.styling = 'none';
-  if (preset.database === undefined) preset.database = 'none';
+  if (preset.database === undefined && !frameworkDef?.forceDatabase) preset.database = 'none';
   if (preset.quality === undefined) preset.quality = 'none';
   if (preset.docker === undefined) preset.docker = false;
   if (preset.install === undefined) preset.install = true;
+  if (isPython) preset.pm = 'pip';
 }
 
 async function confirmOverwrite(targetDir, cli) {
@@ -191,11 +212,23 @@ async function confirmOverwrite(targetDir, cli) {
   emptyDir(targetDir);
 }
 
+/** How to activate the venv, per OS — Windows and POSIX shells use different activation scripts. */
+const VENV_ACTIVATE = process.platform === 'win32' ? '.venv\\Scripts\\activate' : 'source .venv/bin/activate';
+
 /** The command that actually starts the dev server, per framework's own convention. */
 function devCommand(options) {
   const { framework, projectType, pm } = options;
-  const runPrefix = pm === 'npm' ? 'npm run' : pm;
 
+  if (options.runtime === 'python') {
+    if (framework === 'django') return 'python manage.py runserver';
+    if (framework === 'flask') return 'python app/main.py';
+    // Plain uvicorn rather than `fastapi dev`: the latter's rich/emoji
+    // output can crash outright on a legacy (non-UTF-8) Windows console —
+    // uvicorn's is plain text and works everywhere fastapi[standard] does.
+    if (framework === 'fastapi') return 'uvicorn app.main:app --reload';
+  }
+
+  const runPrefix = pm === 'npm' ? 'npm run' : pm;
   if (projectType === 'mobile') return 'npx expo start';
   if (framework === 'tauri') return `${runPrefix} tauri dev`;
   if (framework === 'electron') return pm === 'npm' ? 'npm start' : `${pm} start`;
@@ -211,15 +244,23 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   if (relativeDir !== '.') {
     steps.push(`cd ${/\s/.test(relativeDir) ? `"${relativeDir}"` : relativeDir}`);
   }
-  if (!installed) steps.push(`${options.pm} install`);
+  if (options.runtime === 'python') {
+    steps.push(VENV_ACTIVATE);
+    if (!installed) steps.push('pip install -r requirements.txt');
+  } else if (!installed) {
+    steps.push(`${options.pm} install`);
+  }
   steps.push(devCommand(options));
+
+  const languageLabel =
+    options.language === 'ts' ? 'TypeScript' : options.language === 'python' ? 'Python' : 'JavaScript';
 
   const lines = [
     // Two spaces, not one: ✔ (U+2714) renders full-width in some terminal
     // fonts, which eats a single following space and glues the text on.
     `${pc.green('✔')}  ${pc.bold(`${options.packageName} is ready!`)}`,
     pc.dim(targetDir),
-    pc.dim(`${options.projectType} · ${options.framework} · ${options.language === 'ts' ? 'TypeScript' : 'JavaScript'}`),
+    pc.dim(`${options.projectType} · ${options.framework} · ${languageLabel}`),
     '',
     pc.bold('Next steps'),
     ...steps.map((step, i) => `  ${pc.dim(`${i + 1}.`)} ${pc.cyan(step)}`),
@@ -268,7 +309,10 @@ async function main() {
   // when the user asked for one, the same as every other project type.
   let installed = false;
   if (options.install) {
-    installed = await installDependencies(targetDir, options.pm);
+    installed =
+      options.runtime === 'python'
+        ? await installPythonDependencies(targetDir, warnings)
+        : await installDependencies(targetDir, options.pm);
   }
 
   printSummary(options, { targetDir, cwd, installed, warnings });

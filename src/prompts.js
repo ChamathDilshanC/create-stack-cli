@@ -42,6 +42,31 @@ export const FRAMEWORKS = {
     { value: 'nestjs', title: 'NestJS', scaffolder: 'nestjs', forceLanguage: 'ts' },
     { value: 'fastify', title: 'Fastify', scaffolder: 'manual-fastify' },
     { value: 'hono', title: 'Hono', scaffolder: 'hono' },
+    // Python's own ecosystem: no ts/js split, no npm-family package manager,
+    // and its own quality/database tooling — runtime: 'python' is what
+    // every other module branches on instead of assuming Node throughout.
+    {
+      value: 'django',
+      title: 'Django (Python)',
+      scaffolder: 'django',
+      runtime: 'python',
+      forceLanguage: 'python',
+      forceDatabase: 'django-orm',
+    },
+    {
+      value: 'flask',
+      title: 'Flask (Python)',
+      scaffolder: 'manual-flask',
+      runtime: 'python',
+      forceLanguage: 'python',
+    },
+    {
+      value: 'fastapi',
+      title: 'FastAPI (Python)',
+      scaffolder: 'fastapi',
+      runtime: 'python',
+      forceLanguage: 'python',
+    },
   ],
   desktop: [
     { value: 'electron', title: 'Electron', scaffolder: 'electron' },
@@ -64,9 +89,21 @@ export const DATABASE_OPTIONS = [
   { value: 'none', title: 'None' },
 ];
 
+/** Flask/FastAPI's database choice — Django always forces 'django-orm' instead (see forceDatabase above), skipping this question entirely. */
+export const DATABASE_OPTIONS_PYTHON = [
+  { value: 'sqlalchemy', title: 'SQLAlchemy' },
+  { value: 'none', title: 'None' },
+];
+
 export const QUALITY_OPTIONS = [
   { value: 'eslint-prettier', title: 'ESLint + Prettier' },
   { value: 'biome', title: 'Biome' },
+  { value: 'none', title: 'None' },
+];
+
+export const QUALITY_OPTIONS_PYTHON = [
+  { value: 'ruff', title: 'Ruff (lint + format)' },
+  { value: 'black-flake8', title: 'Black + Flake8' },
   { value: 'none', title: 'None' },
 ];
 
@@ -172,6 +209,9 @@ export async function getProjectOptions(preset = {}) {
   }
   result.scaffolder = frameworkDef.scaffolder;
   result.viteTemplate = frameworkDef.viteTemplate;
+  // Everything else in this CLI assumes Node (npm-family package manager,
+  // ESLint/Biome, package.json) unless a module explicitly checks this.
+  result.runtime = frameworkDef.runtime ?? 'node';
 
   // 4. Language (Q3) — hidden entirely when the framework forces one (Angular, NestJS).
   if (frameworkDef.forceLanguage) {
@@ -212,14 +252,18 @@ export async function getProjectOptions(preset = {}) {
   }
 
   // 6. Database / ORM (Q5) — only where there's a server to run it in.
-  if (supportsDatabase(result.projectType)) {
+  // Django always ships its own ORM, so this is forced/skipped for it, the
+  // same way Angular/NestJS force a language above.
+  if (frameworkDef.forceDatabase) {
+    result.database = frameworkDef.forceDatabase;
+  } else if (supportsDatabase(result.projectType)) {
     if (!result.database) {
       const { database } = await prompts(
         {
           type: 'select',
           name: 'database',
           message: 'Database / ORM:',
-          choices: DATABASE_OPTIONS,
+          choices: result.runtime === 'python' ? DATABASE_OPTIONS_PYTHON : DATABASE_OPTIONS,
         },
         { onCancel }
       );
@@ -230,15 +274,16 @@ export async function getProjectOptions(preset = {}) {
   }
 
   // 7. Code quality (Q6a) — a single select, not two checkboxes: ESLint and
-  // Biome are mutually exclusive tools, so a radio choice makes that
-  // impossible to violate instead of just discouraged.
+  // Biome (or Ruff and Black+Flake8, for Python) are mutually exclusive
+  // tools, so a radio choice makes that impossible to violate instead of
+  // just discouraged.
   if (!result.quality) {
     const { quality } = await prompts(
       {
         type: 'select',
         name: 'quality',
         message: 'Code quality tooling:',
-        choices: QUALITY_OPTIONS,
+        choices: result.runtime === 'python' ? QUALITY_OPTIONS_PYTHON : QUALITY_OPTIONS,
       },
       { onCancel }
     );
@@ -259,8 +304,11 @@ export async function getProjectOptions(preset = {}) {
     result.docker = docker;
   }
 
-  // 9. Package manager.
-  if (!result.pm) {
+  // 9. Package manager — Python has no npm-family equivalent; pip inside a
+  // venv is used unconditionally, so there's nothing to ask.
+  if (result.runtime === 'python') {
+    result.pm = 'pip';
+  } else if (!result.pm) {
     const { pm } = await prompts(
       {
         type: 'select',

@@ -1,13 +1,17 @@
 import path from 'node:path';
 import fs from 'fs-extra';
+import { execa } from 'execa';
+import ora from 'ora';
 
 import { applyDatabase } from './database.js';
 import { applyDocker } from './docker.js';
+import { applyEnvFiles } from './env.js';
 import { applyQuality } from './quality.js';
+import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
 import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
 import { generateEnterpriseStructure, modelsDirFor } from './structure.js';
 import { applyStyling } from './styling.js';
-import { logger } from './utils.js';
+import { commandOutputTail, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
 /* ------------------------------------------------------------------ */
 /* Frontend                                                            */
@@ -235,6 +239,13 @@ async function handleFullstack(options, warnings) {
     await applyQuality(options, warnings, { eslintHandledInline, prettierHandledInline });
   }
 
+  // Each framework's own real srcDir, not a one-size-fits-all guess: Nuxt 4
+  // already uses app/ as its srcDir, so the enterprise layout goes there
+  // instead of creating a second, unused src/ alongside it; the rest use
+  // (or gain) a plain src/, which none of them otherwise occupy at root.
+  const fullstackBaseDir = { nuxt: 'app' }[framework] ?? 'src';
+  await generateEnterpriseStructure(options, warnings, { baseDir: fullstackBaseDir });
+
   if (options.docker) {
     const nodeStart = { next: 'npm start', nuxt: 'node .output/server/index.mjs', astro: 'node ./dist/server/entry.mjs' };
     await applyDocker(options, warnings, {
@@ -399,6 +410,9 @@ async function handleBackend(options, warnings) {
   if (framework === 'fastify') return handleManualBackend(options, warnings, 'fastify');
   if (framework === 'nestjs') return handleNestBackend(options, warnings);
   if (framework === 'hono') return handleHonoBackend(options, warnings);
+  if (framework === 'django') return handleDjangoBackend(options, warnings);
+  if (framework === 'flask') return handleManualPythonBackend(options, warnings, 'flask');
+  if (framework === 'fastapi') return handleManualPythonBackend(options, warnings, 'fastapi');
 
   throw new Error(`Unknown backend framework: ${framework}`);
 }
@@ -479,6 +493,152 @@ async function handleHonoBackend(options, warnings) {
       startCommand: 'npm start',
       port: 3000,
     });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Backend — Python (Django / Flask / FastAPI)                         */
+/* ------------------------------------------------------------------ */
+
+/** Django project package names are Python identifiers: no hyphens, can't start with a digit. */
+function toPythonIdentifier(name) {
+  const base = name
+    .replace(/^@[^/]+\//, '')
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const safe = /^[a-zA-Z_]/.test(base) ? base : `app_${base}`;
+  return safe || 'app';
+}
+
+async function handleDjangoBackend(options, warnings) {
+  const { targetDir } = options;
+  await fs.ensureDir(targetDir);
+
+  const venvReady = await createVenv(targetDir, warnings);
+  await pipInstallOrRecord({ options, warnings, packages: ['django'], label: 'Django', venvReady });
+
+  const projectName = toPythonIdentifier(options.packageName);
+  if (venvReady && options.install) {
+    const djangoAdmin = venvBinPath(targetDir, 'django-admin');
+    const spinner = ora({ text: 'Scaffolding Django project with django-admin...', indent: 2 }).start();
+    try {
+      await execa(djangoAdmin, ['startproject', projectName, '.'], { cwd: targetDir, stdin: 'ignore' });
+      spinnerSucceed(spinner, 'Django project scaffolded (django-admin startproject).');
+    } catch (err) {
+      spinnerFail(spinner, 'Django project scaffolding failed.');
+      const tail = commandOutputTail(err);
+      warnings.push(
+        `django-admin startproject could not run (${tail || err.message}) — run it yourself once dependencies are installed: ` +
+          `.venv/bin/django-admin startproject ${projectName} .`
+      );
+    }
+  } else {
+    warnings.push(
+      `Django itself isn't installed yet, so django-admin couldn't run — after \`pip install -r requirements.txt\`, run: django-admin startproject ${projectName} .`
+    );
+  }
+
+  // Django's own startproject already creates <projectName>/settings.py,
+  // urls.py, etc. — the enterprise layout goes inside that same package
+  // rather than cluttering the root next to manage.py.
+  const structureBaseDir = await fs.pathExists(path.join(targetDir, projectName)) ? projectName : '.';
+  await generateEnterpriseStructure(options, warnings, { baseDir: structureBaseDir });
+
+  await applyPythonQuality(options, warnings, venvReady);
+
+  if (options.docker) {
+    await applyDocker(options, warnings, {
+      flavor: 'python',
+      startCommand: 'python manage.py runserver 0.0.0.0:8000',
+      port: 8000,
+    });
+  }
+}
+
+const FASTAPI_MAIN = `from fastapi import FastAPI
+
+app = FastAPI()
+
+
+@app.get("/")
+async def root():
+    return {"message": "Hello from FastAPI!"}
+`;
+
+const FLASK_MAIN = `from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    return jsonify(message="Hello from Flask!")
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
+`;
+
+/**
+ * Flask and FastAPI have no official project-scaffolding command (FastAPI's
+ * own CLI runs/dev-serves a file, it doesn't generate one) — this writes a
+ * clean requirements.txt + app/main.py by hand instead, the same exception
+ * already made for Express/Fastify on the Node side.
+ */
+async function handleManualPythonBackend(options, warnings, kind) {
+  const { targetDir } = options;
+  await fs.ensureDir(targetDir);
+
+  await fs.outputFile(path.join(targetDir, 'app', 'main.py'), kind === 'flask' ? FLASK_MAIN : FASTAPI_MAIN);
+  await fs.outputFile(path.join(targetDir, 'app', '__init__.py'), '');
+  await fs.writeFile(path.join(targetDir, '.gitignore'), '.venv/\n__pycache__/\n*.pyc\n.env\n');
+
+  const venvReady = await createVenv(targetDir, warnings);
+  const packages = kind === 'flask' ? ['flask'] : ['fastapi[standard]'];
+  await pipInstallOrRecord({ options, warnings, packages, label: kind === 'flask' ? 'Flask' : 'FastAPI', venvReady });
+
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'app' });
+  await applyPythonQuality(options, warnings, venvReady);
+
+  if (options.docker) {
+    await applyDocker(options, warnings, {
+      flavor: 'python',
+      startCommand:
+        kind === 'flask'
+          ? 'python app/main.py'
+          : 'uvicorn app.main:app --host 0.0.0.0 --port 8000',
+      port: kind === 'flask' ? 5000 : 8000,
+    });
+  }
+}
+
+/** Ruff or Black+Flake8 — Python's equivalents of the Node quality.js path, kept local since none of it is Node-specific. */
+async function applyPythonQuality(options, warnings, venvReady) {
+  const { targetDir, quality } = options;
+  if (quality === 'none') return;
+
+  if (quality === 'ruff') {
+    await pipInstallOrRecord({ options, warnings, packages: ['ruff'], label: 'Ruff', venvReady });
+    await fs.writeFile(
+      path.join(targetDir, 'ruff.toml'),
+      `line-length = 100\n\n[lint]\nselect = ["E", "F", "I"]\n\n[format]\nquote-style = "double"\n`
+    );
+  } else if (quality === 'black-flake8') {
+    await pipInstallOrRecord({
+      options,
+      warnings,
+      packages: ['black', 'flake8'],
+      label: 'Black + Flake8',
+      venvReady,
+    });
+    // Unlike Black/Ruff, flake8 has no default excludes at all — without an
+    // explicit list it happily recurses into .venv and lints every
+    // third-party package installed there too.
+    await fs.writeFile(
+      path.join(targetDir, '.flake8'),
+      '[flake8]\nmax-line-length = 100\nextend-ignore = E203\nexclude = .venv,__pycache__,.git\n'
+    );
+    await fs.writeFile(path.join(targetDir, 'pyproject.toml'), '[tool.black]\nline-length = 100\n');
   }
 }
 
@@ -643,6 +803,9 @@ export async function scaffoldProject(options) {
   if (!handler) throw new Error(`Unknown project type: ${options.projectType}`);
 
   await handler(options, warnings);
+  // Every project type gets .env/.env.local/.env.production, regardless of
+  // which handler ran — one call here instead of one per handler.
+  await applyEnvFiles(options, warnings);
 
   return { warnings };
 }

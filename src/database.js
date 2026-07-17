@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'fs-extra';
 
+import { appendEnvVars } from './env.js';
 import { installOrRecord, tryRun } from './scaffold-utils.js';
 
 /* ------------------------------------------------------------------ */
@@ -51,6 +52,15 @@ async function setupPrisma(options, warnings) {
     const normalized = source.replace(/"([^"\\]*)"/g, "'$1'");
     if (normalized !== source) await fs.writeFile(configPath, normalized);
   }
+
+  // `prisma init` already wrote DATABASE_URL into .env directly — mirror it
+  // into .env.local/.env.production too, so all three stay in sync like
+  // every other database option.
+  await appendEnvVars(
+    options.targetDir,
+    { DATABASE_URL: 'file:./dev.db' },
+    { DATABASE_URL: 'REPLACE_WITH_PRODUCTION_DATABASE_URL' }
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -117,9 +127,10 @@ async function setupDrizzle(options, warnings, modelsDir) {
   await fs.writeFile(path.join(targetDir, 'drizzle.config.ts'), drizzleConfig(modelsDir.split(path.sep).join('/')));
   await fs.outputFile(path.join(targetDir, modelsDir, `schema.${ext}`), drizzleSchema);
   await fs.outputFile(path.join(targetDir, modelsDir, `index.${ext}`), drizzleClient);
-  await fs.outputFile(
-    path.join(targetDir, '.env'),
-    `${(await fs.pathExists(path.join(targetDir, '.env'))) ? await fs.readFile(path.join(targetDir, '.env'), 'utf8') : ''}DATABASE_URL="file:./local.db"\n`
+  await appendEnvVars(
+    targetDir,
+    { DATABASE_URL: 'file:./local.db' },
+    { DATABASE_URL: 'REPLACE_WITH_PRODUCTION_DATABASE_URL' }
   );
 }
 
@@ -165,9 +176,10 @@ async function setupMongoose(options, warnings, modelsDir) {
 
   await fs.outputFile(path.join(targetDir, modelsDir, `connection.${ext}`), mongooseConnection(isTs));
   await fs.outputFile(path.join(targetDir, modelsDir, `User.${ext}`), mongooseUserModel(isTs));
-  await fs.outputFile(
-    path.join(targetDir, '.env'),
-    `${(await fs.pathExists(path.join(targetDir, '.env'))) ? await fs.readFile(path.join(targetDir, '.env'), 'utf8') : ''}MONGODB_URI="mongodb://localhost:27017/${options.packageName}"\n`
+  await appendEnvVars(
+    targetDir,
+    { MONGODB_URI: `mongodb://localhost:27017/${options.packageName}` },
+    { MONGODB_URI: 'REPLACE_WITH_PRODUCTION_MONGODB_URI' }
   );
 }
 

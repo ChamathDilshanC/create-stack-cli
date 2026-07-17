@@ -36,6 +36,17 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 `;
 
+/** Python backend flavor: no venv inside the container — dependencies install straight into the image's own site-packages. */
+const pythonDockerfile = ({ startCommand, port }) => `# syntax=docker/dockerfile:1
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE ${port}
+CMD ${JSON.stringify(startCommand.replace(/^\.venv\/bin\//, '').split(' '))}
+`;
+
 const composeTemplate = (serviceName, hostPort, containerPort) => `services:
   app:
     build: .
@@ -62,21 +73,23 @@ export async function applyDocker(options, warnings, { flavor, buildCommand, sta
     const dockerfile =
       flavor === 'static'
         ? staticDockerfile({ buildCommand })
-        : nodeDockerfile({ buildCommand, startCommand, port });
+        : flavor === 'python'
+          ? pythonDockerfile({ startCommand, port })
+          : nodeDockerfile({ buildCommand, startCommand, port });
 
     await fs.writeFile(path.join(options.targetDir, 'Dockerfile'), dockerfile);
     await fs.writeFile(
       path.join(options.targetDir, 'docker-compose.yml'),
       composeTemplate(options.packageName, port, containerPort)
     );
-    await fs.writeFile(path.join(options.targetDir, '.dockerignore'), 'node_modules\ndist\nbuild\n.git\n');
+    const dockerignore =
+      flavor === 'python' ? '.venv\n__pycache__\n*.pyc\n.git\n' : 'node_modules\ndist\nbuild\n.git\n';
+    await fs.writeFile(path.join(options.targetDir, '.dockerignore'), dockerignore);
 
-    // docker-compose's `env_file: .env` must resolve to a real file, even an
-    // empty one, or `docker compose up` fails before the container starts.
-    const envPath = path.join(options.targetDir, '.env');
-    if (!(await fs.pathExists(envPath))) {
-      await fs.writeFile(envPath, '');
-    }
+    // docker-compose's `env_file: .env` needs a real file to exist, but not
+    // necessarily yet — scaffoldProject() always calls applyEnvFiles() right
+    // after the handler this runs inside of finishes, well before the user
+    // could actually run `docker compose up`.
 
     spinnerSucceed(spinner, 'Docker files generated (Dockerfile, docker-compose.yml).');
   } catch (err) {
