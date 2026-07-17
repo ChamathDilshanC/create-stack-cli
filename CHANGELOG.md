@@ -1,3 +1,10 @@
+# [3.2.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.1.0...v3.2.0) (2026-07-17)
+
+
+### Features
+
+* add back navigation to the wizard and pin Expo scaffolds to an app-store-compatible SDK ([a41b9bc](https://github.com/ChamathDilshanC/create-stack-cli/commit/a41b9bc8000bd2f7a194b8461364e9a7098d9246))
+
 # [3.1.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.0.0...v3.1.0) (2026-07-17)
 
 
