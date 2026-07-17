@@ -1,3 +1,10 @@
+## [3.2.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.2.0...v3.2.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* exclude pages/ from Nuxt's enterprise structure to prevent router match errors ([55d91aa](https://github.com/ChamathDilshanC/create-stack-cli/commit/55d91aa9e166ec1a76cf33a6c614c3c6724a5ec5))
+
 # [3.2.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.1.0...v3.2.0) (2026-07-17)
 
 
