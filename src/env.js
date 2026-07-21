@@ -34,6 +34,11 @@ const JAVA_NOTE =
   '# properties (SERVER_PORT, SPRING_PROFILES_ACTIVE) if you export them into\n' +
   '# the environment yourself, or add a library like spring-dotenv.\n';
 
+/** Plain Rust binaries don't read .env files natively either — these still get written for consistency, same as Angular/Java above. */
+const RUST_NOTE =
+  '# Plain Rust binaries do not read .env files natively — add the `dotenvy`\n' +
+  '# crate and call dotenvy::dotenv().ok() at the start of main() to load these.\n';
+
 /** Each Python backend's own default dev port — Django/FastAPI both default to 8000, Flask to 5000. */
 const PYTHON_PORT = { django: '8000', flask: '5000', fastapi: '8000' };
 
@@ -46,11 +51,17 @@ function baseVars(options) {
   if (projectType === 'backend' && runtime === 'java') {
     return { SERVER_PORT: '8080', SPRING_PROFILES_ACTIVE: 'development' };
   }
+  if (projectType === 'backend' && runtime === 'rust') {
+    return { PORT: '3000', RUST_LOG: 'debug' };
+  }
   if (projectType === 'backend') {
     return { PORT: '3000', NODE_ENV: 'development' };
   }
   if (projectType === 'desktop' && framework === 'electron') {
     return { NODE_ENV: 'development' };
+  }
+  if (projectType === 'ai') {
+    return { ENVIRONMENT: 'development' };
   }
 
   const prefix = PUBLIC_PREFIX[framework] ?? '';
@@ -69,11 +80,17 @@ function productionVars(options) {
   if (projectType === 'backend' && runtime === 'java') {
     return { SERVER_PORT: '8080', SPRING_PROFILES_ACTIVE: 'production' };
   }
+  if (projectType === 'backend' && runtime === 'rust') {
+    return { PORT: '3000', RUST_LOG: 'warn' };
+  }
   if (projectType === 'backend') {
     return { PORT: '3000', NODE_ENV: 'production' };
   }
   if (projectType === 'desktop' && framework === 'electron') {
     return { NODE_ENV: 'production' };
+  }
+  if (projectType === 'ai') {
+    return { ENVIRONMENT: 'production' };
   }
 
   const prefix = PUBLIC_PREFIX[framework] ?? '';
@@ -128,7 +145,8 @@ export async function applyEnvFiles(options, warnings) {
   const spinner = createSpinner('Generating environment files...');
   try {
     const { targetDir, framework, runtime } = options;
-    const header = framework === 'angular' ? ANGULAR_NOTE : runtime === 'java' ? JAVA_NOTE : '';
+    const header =
+      framework === 'angular' ? ANGULAR_NOTE : runtime === 'java' ? JAVA_NOTE : runtime === 'rust' ? RUST_NOTE : '';
 
     await mergeEnvFile(path.join(targetDir, '.env'), baseVars(options), { header });
     await mergeEnvFile(path.join(targetDir, '.env.local'), {}, { header });

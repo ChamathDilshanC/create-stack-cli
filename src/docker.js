@@ -67,6 +67,20 @@ CMD ["java", "-jar", "app.jar"]
 `;
 };
 
+/** Rust/Axum flavor: build the release binary with Cargo, then run it directly on a slim Debian base (no runtime needed, just the compiled binary). */
+const rustDockerfile = ({ binaryName, port }) => `# syntax=docker/dockerfile:1
+FROM rust:1-slim AS build
+WORKDIR /app
+COPY . .
+RUN cargo build --release
+
+FROM debian:bookworm-slim AS runner
+WORKDIR /app
+COPY --from=build /app/target/release/${binaryName} ./${binaryName}
+EXPOSE ${port}
+CMD ["./${binaryName}"]
+`;
+
 const composeTemplate = (serviceName, hostPort, containerPort) => `services:
   app:
     build: .
@@ -86,7 +100,11 @@ const composeTemplate = (serviceName, hostPort, containerPort) => `services:
  * `static` flavor nginx always listens on 80 inside the container; `port`
  * is only the host-side port it gets published on.
  */
-export async function applyDocker(options, warnings, { flavor, buildCommand, startCommand, port, buildTool, javaVersion }) {
+export async function applyDocker(
+  options,
+  warnings,
+  { flavor, buildCommand, startCommand, port, buildTool, javaVersion, binaryName }
+) {
   const spinner = createSpinner('Generating Docker files...');
   try {
     const containerPort = flavor === 'static' ? 80 : port;
@@ -97,7 +115,9 @@ export async function applyDocker(options, warnings, { flavor, buildCommand, sta
           ? pythonDockerfile({ startCommand, port })
           : flavor === 'java'
             ? javaDockerfile({ buildTool, javaVersion, port })
-            : nodeDockerfile({ buildCommand, startCommand, port });
+            : flavor === 'rust'
+              ? rustDockerfile({ binaryName, port })
+              : nodeDockerfile({ buildCommand, startCommand, port });
 
     await fs.writeFile(path.join(options.targetDir, 'Dockerfile'), dockerfile);
     await fs.writeFile(
@@ -109,7 +129,9 @@ export async function applyDocker(options, warnings, { flavor, buildCommand, sta
         ? '.venv\n__pycache__\n*.pyc\n.git\n'
         : flavor === 'java'
           ? 'target\nbuild\n.gradle\n.mvn\nHELP.md\n.git\n'
-          : 'node_modules\ndist\nbuild\n.git\n';
+          : flavor === 'rust'
+            ? 'target\n.git\n'
+            : 'node_modules\ndist\nbuild\n.git\n';
     await fs.writeFile(path.join(options.targetDir, '.dockerignore'), dockerignore);
 
     // docker-compose's `env_file: .env` needs a real file to exist, but not

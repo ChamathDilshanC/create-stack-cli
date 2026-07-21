@@ -44,7 +44,7 @@ function parseArgs() {
   program
     .name('create-stack')
     .description(
-      'Ultimate multi-tiered project orchestrator — Frontend, Fullstack, Backend, Desktop, and Mobile, scaffolded with each stack\'s own official tooling.'
+      'Ultimate multi-tiered project orchestrator — Frontend, Fullstack, Backend, Desktop, Mobile, and AI/ML, scaffolded with each stack\'s own official tooling.'
     )
     .version(pkg.version)
     .argument('[project-directory]', 'directory to create the project in')
@@ -63,6 +63,7 @@ function parseArgs() {
     .option('--group-id <id>', 'Spring Boot only: Java group ID (default: com.example)')
     .option('--no-hot-reload', 'Spring Boot only: skip DevTools / auto-restart-on-change wiring')
     .option('--extra-packages <list>', 'comma-separated extra packages to add — npm for Node projects, PyPI for Python (Spring Boot: use --dependencies instead)')
+    .option('--ml-libraries <list>', 'AI/ML (Python) only: comma-separated PyPI library bundles, e.g. numpy,pandas,scikit-learn')
     .option('--no-install', 'skip automatic dependency installation')
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
     .option('--overwrite', 'overwrite the target directory if it already exists')
@@ -88,6 +89,7 @@ function parseArgs() {
     dependencies: opts.dependencies,
     groupId: opts.groupId,
     extraPackages: opts.extraPackages,
+    mlLibraries: opts.mlLibraries,
     overwrite: Boolean(opts.overwrite),
     yes: Boolean(opts.yes),
     // Commander gives --no-install/--no-hot-reload a default of `true`; only
@@ -196,6 +198,12 @@ function buildPreset(cli) {
       .map((name) => name.trim())
       .filter(Boolean);
   }
+  if (cli.mlLibraries) {
+    preset.mlLibraries = cli.mlLibraries
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean);
+  }
 
   if (cli.install !== undefined) preset.install = cli.install;
 
@@ -211,8 +219,10 @@ function assertNonInteractiveComplete(preset, cli) {
   const frameworkDef = FRAMEWORKS[preset.projectType]?.find((f) => f.value === preset.framework);
   const isPython = frameworkDef?.runtime === 'python';
   const isJava = frameworkDef?.runtime === 'java';
+  const isRust = frameworkDef?.runtime === 'rust';
+  const isAi = frameworkDef?.value === 'python-ml';
 
-  const required = ['projectName', 'projectType', 'framework', ...(isPython || isJava ? [] : ['pm'])];
+  const required = ['projectName', 'projectType', 'framework', ...(isPython || isJava || isRust ? [] : ['pm'])];
   const missing = required.filter((key) => preset[key] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -238,6 +248,11 @@ function assertNonInteractiveComplete(preset, cli) {
     preset.pm = preset.buildTool;
     preset.install = false;
   }
+  if (isRust) {
+    preset.pm = 'cargo';
+    preset.install = false;
+  }
+  if (isAi && preset.mlLibraries === undefined) preset.mlLibraries = [];
 }
 
 async function confirmOverwrite(targetDir, cli) {
@@ -275,6 +290,15 @@ function devCommand(options) {
     // output can crash outright on a legacy (non-UTF-8) Windows console —
     // uvicorn's is plain text and works everywhere fastapi[standard] does.
     if (framework === 'fastapi') return 'uvicorn app.main:app --reload';
+    // AI/ML has no dev server — it's a plain script, not a web app.
+    if (framework === 'python-ml') return 'python main.py';
+  }
+
+  if (options.runtime === 'rust') {
+    // `cargo run` fetches + builds dependencies on first invocation too, so
+    // this doubles as both the "install" step (forced off in prompts.js) and
+    // the dev command — there's no separate build step to run first.
+    return 'cargo run';
   }
 
   if (options.runtime === 'java') {
@@ -320,8 +344,8 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   if (options.runtime === 'python') {
     steps.push(VENV_ACTIVATE);
     if (!installed) steps.push('pip install -r requirements.txt');
-  } else if (options.runtime === 'java') {
-    // Maven/Gradle's own wrapper resolves dependencies itself on first run — nothing separate to install.
+  } else if (options.runtime === 'java' || options.runtime === 'rust') {
+    // Maven/Gradle's own wrapper (and Cargo, on `cargo run`) resolves dependencies itself on first run — nothing separate to install.
   } else if (!installed) {
     steps.push(`${options.pm} install`);
   }
@@ -334,7 +358,9 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
         ? 'Python'
         : options.language === 'java'
           ? 'Java'
-          : 'JavaScript';
+          : options.language === 'rust'
+            ? 'Rust'
+            : 'JavaScript';
 
   const lines = [
     pc.dim(targetDir),

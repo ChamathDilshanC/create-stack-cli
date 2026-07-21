@@ -425,6 +425,7 @@ async function handleBackend(options, warnings) {
   if (framework === 'flask') return handleManualPythonBackend(options, warnings, 'flask');
   if (framework === 'fastapi') return handleManualPythonBackend(options, warnings, 'fastapi');
   if (framework === 'spring') return handleSpringBackend(options, warnings);
+  if (framework === 'rust-axum') return handleRustBackend(options, warnings);
 
   throw new Error(`Unknown backend framework: ${framework}`);
 }
@@ -740,6 +741,116 @@ async function handleSpringBackend(options, warnings) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Backend — Rust (Axum)                                                */
+/* ------------------------------------------------------------------ */
+
+/** Cargo package/binary names: lowercase, digits, hyphens, underscores; must start with a letter or underscore. */
+function toCargoPackageName(packageName) {
+  const base = packageName
+    .replace(/^@[^/]+\//, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return /^[a-z_]/.test(base) ? base || 'app' : `app-${base}`;
+}
+
+const AXUM_CARGO_TOML = (cargoName) => `[package]
+name = "${cargoName}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+`;
+
+const AXUM_MAIN_RS = `use axum::{routing::get, Json, Router};
+use serde_json::{json, Value};
+
+#[tokio::main]
+async fn main() {
+    let app = Router::new().route("/", get(root));
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("Server running at http://localhost:3000");
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn root() -> Json<Value> {
+    Json(json!({ "message": "Hello from Axum!" }))
+}
+`;
+
+/**
+ * Axum has no official project-scaffolding CLI (no "cargo new --template
+ * axum"), so — like Express/Fastify/Flask/FastAPI above — this writes
+ * Cargo.toml + src/main.rs by hand. Cargo itself resolves and builds
+ * dependencies on the first `cargo run`/`cargo build`, so unlike every
+ * Node/Python backend there's no separate install step to run here (options.install
+ * is forced false in prompts.js's stepInstall for this runtime). The
+ * enterprise folder layout is skipped too, the same way it is for Spring:
+ * it's a Node/Express-shaped convention (controllers/routes/middlewares)
+ * that doesn't map onto idiomatic Rust module structure.
+ */
+async function handleRustBackend(options, warnings) {
+  const { targetDir, packageName } = options;
+  await fs.ensureDir(targetDir);
+
+  const cargoName = toCargoPackageName(packageName);
+  await fs.outputFile(path.join(targetDir, 'Cargo.toml'), AXUM_CARGO_TOML(cargoName));
+  await fs.outputFile(path.join(targetDir, 'src', 'main.rs'), AXUM_MAIN_RS);
+  await fs.writeFile(path.join(targetDir, '.gitignore'), '/target\n.env\n');
+
+  logger.dim('  › Wrote Cargo.toml + src/main.rs by hand (Axum has no official project scaffolder).');
+  warnings.push('Rust/Axum projects build via Cargo directly — run "cargo run" to fetch dependencies, compile, and start the server (no separate install step).');
+
+  if (options.docker) {
+    await applyDocker(options, warnings, { flavor: 'rust', binaryName: cargoName, port: 3000 });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* AI / ML (Python)                                                     */
+/* ------------------------------------------------------------------ */
+
+const AI_ML_MAIN_PY = `def main():
+    print("Hello from your create-stack AI/ML project!")
+
+
+if __name__ == "__main__":
+    main()
+`;
+
+/**
+ * Not a web backend — a plain Python project (its own .venv + requirements.txt,
+ * same machinery Django/Flask/FastAPI use above) preloaded with whichever
+ * library bundles were picked in prompts.js's stepMlLibraries. No official
+ * scaffolder exists for "a Python project with these libraries", so this
+ * writes a minimal main.py by hand, the same exception already made for
+ * Express/Fastify/Flask/FastAPI/Axum.
+ */
+async function handleAI(options, warnings) {
+  const { targetDir, mlLibraries = [] } = options;
+  await fs.ensureDir(targetDir);
+
+  await fs.outputFile(path.join(targetDir, 'main.py'), AI_ML_MAIN_PY);
+  await fs.writeFile(path.join(targetDir, '.gitignore'), '.venv/\n__pycache__/\n*.pyc\n.env\n.ipynb_checkpoints/\n');
+
+  const venvReady = await createVenv(targetDir, warnings);
+  if (mlLibraries.length > 0) {
+    await pipInstallOrRecord({ options, warnings, packages: mlLibraries, label: 'Selected libraries', venvReady });
+  }
+
+  await applyPythonQuality(options, warnings, venvReady);
+
+  if (options.docker) {
+    await applyDocker(options, warnings, { flavor: 'python', startCommand: 'python main.py', port: 8000 });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Desktop                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -901,6 +1012,7 @@ const HANDLERS = {
   backend: handleBackend,
   desktop: handleDesktop,
   mobile: handleMobile,
+  ai: handleAI,
 };
 
 /**

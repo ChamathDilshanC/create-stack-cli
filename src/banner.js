@@ -39,20 +39,20 @@ function prettyCwd() {
 }
 
 /**
- * Our own mark: a ◆ apex over five ascending, widening bars — one per
+ * Our own mark: a ◆ apex over six ascending, widening bars — one per
  * PROJECT_TYPES entry (prompts.js), in that same order and those same exact
  * colors (Frontend cyan, Fullstack magenta, Backend green, Desktop yellow,
- * Mobile red), each a little wider than the last. Reads as a small "growing
- * stack" rather than five identical blocks. The half-block caps (▐…▌) are
- * the same rounded-corner trick Claude Code's own mascot uses, just drawn as
- * our own shape — and, like the ◆ and █ already used elsewhere in this file,
- * they're plain Block Elements glyphs rather than the "ambiguous width"
- * Dingbats that cause ora's checkmark to glue onto adjacent text in some
- * terminal fonts.
+ * Mobile red, AI/ML blue), each a little wider than the last. Reads as a
+ * small "growing stack" rather than six identical blocks. The half-block
+ * caps (▐…▌) are the same rounded-corner trick Claude Code's own mascot
+ * uses, just drawn as our own shape — and, like the ◆ and █ already used
+ * elsewhere in this file, they're plain Block Elements glyphs rather than
+ * the "ambiguous width" Dingbats that cause ora's checkmark to glue onto
+ * adjacent text in some terminal fonts.
  */
 function logo(width) {
   const bar = (color, w) => color(`▐${'█'.repeat(Math.max(0, w - 2))}▌`);
-  const colors = [pc.cyan, pc.magenta, pc.green, pc.yellow, pc.red];
+  const colors = [pc.cyan, pc.magenta, pc.green, pc.yellow, pc.red, pc.blue];
   const minWidth = Math.max(6, Math.round(width / 2));
   const step = (width - minWidth) / (colors.length - 1);
   return [
@@ -82,7 +82,7 @@ function printWideBanner(pkg, columns) {
   ];
 
   const tips = [
-    ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile'],
+    ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile/AI-ML'],
     ['--type backend -f nestjs', 'preselect your stack'],
     ['--help', 'see every option'],
   ];
@@ -136,7 +136,7 @@ function printCompactBanner(pkg, columns) {
   const title = `${pc.cyan('◆')} ${pc.bold(pc.cyan('Create Stack CLI'))} ${pc.dim(`v${pkg.version}`)}`;
 
   const tips = [
-    ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile'],
+    ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile/AI-ML'],
     ['--type backend -f nestjs', 'preselect your stack'],
     ['--help', 'see every option'],
   ];
@@ -152,7 +152,7 @@ function printCompactBanner(pkg, columns) {
     `no stale templates, ever.`,
     '',
     pc.dim(
-      `${pc.cyan('Frontend')} · ${pc.magenta('Fullstack')} · ${pc.green('Backend')} · ${pc.yellow('Desktop')} · ${pc.red('Mobile')}`
+      `${pc.cyan('Frontend')} · ${pc.magenta('Fullstack')} · ${pc.green('Backend')} · ${pc.yellow('Desktop')} · ${pc.red('Mobile')} · ${pc.blue('AI/ML')}`
     ),
     '',
     pc.dim('─'.repeat(width)),

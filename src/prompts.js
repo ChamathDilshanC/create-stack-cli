@@ -1,6 +1,6 @@
 import path from 'node:path';
 import pc from 'picocolors';
-import { autocompleteMultiselect, log, multiselect, select, text } from '@clack/prompts';
+import { autocomplete, autocompleteMultiselect, groupMultiselect, log, multiselect, select, text } from '@clack/prompts';
 import { pypiPackageExists, searchNpmPackages } from './packages.js';
 import { getSpringChoices } from './spring.js';
 import {
@@ -23,6 +23,7 @@ export const PROJECT_TYPES = [
   { value: 'backend', title: 'Backend', color: pc.green },
   { value: 'desktop', title: 'Desktop', color: pc.yellow },
   { value: 'mobile', title: 'Mobile', color: pc.red },
+  { value: 'ai', title: 'AI / ML', color: pc.blue },
 ];
 
 export const FRAMEWORKS = {
@@ -83,12 +84,79 @@ export const FRAMEWORKS = {
       forceLanguage: 'java',
       forceDatabase: 'spring-initializr',
     },
+    // Rust's own ecosystem, mirroring Python/Java above: no ts/js split, no
+    // npm-family package manager (Cargo instead), and Cargo itself resolves
+    // + builds dependencies on first run, so there's no separate install
+    // step either. Axum has no official project-scaffolding CLI (no
+    // "cargo new --template axum"), so it's hand-written the same way
+    // Express/Fastify/Flask/FastAPI are below.
+    {
+      value: 'rust-axum',
+      title: 'Axum (Rust)',
+      scaffolder: 'rust',
+      runtime: 'rust',
+      forceLanguage: 'rust',
+      forceDatabase: 'none',
+    },
   ],
   desktop: [
     { value: 'electron', title: 'Electron', scaffolder: 'electron' },
     { value: 'tauri', title: 'Tauri', scaffolder: 'tauri' },
   ],
   mobile: [{ value: 'expo', title: 'Expo (React Native)', scaffolder: 'expo' }],
+  // Not a web backend — a plain Python project preloaded with whichever
+  // data-science/ML library bundles were picked in stepMlLibraries below.
+  // Single entry, same as Mobile: stepFramework auto-selects it, nothing to ask.
+  ai: [{ value: 'python-ml', title: 'Python (Data Science / ML)', scaffolder: 'python-ml', runtime: 'python', forceLanguage: 'python' }],
+};
+
+/**
+ * Curated PyPI bundles for the AI/ML project type, grouped the same way
+ * start.spring.io groups its own dependency catalog. Picked for being
+ * actively maintained where a maintained alternative exists (e.g. Pillow
+ * over the long-abandoned PIL, scikit-learn over unmaintained peers) —
+ * this is a static list (unlike Spring's live-fetched one or PyPI search in
+ * stepExtraPackages) since there's no equivalent live "top ML packages" API.
+ */
+export const ML_LIBRARY_GROUPS = {
+  'Machine Learning': [
+    { value: 'numpy', title: 'NumPy' },
+    { value: 'pandas', title: 'Pandas' },
+    { value: 'scipy', title: 'SciPy' },
+    { value: 'matplotlib', title: 'Matplotlib' },
+    { value: 'seaborn', title: 'Seaborn' },
+    { value: 'scikit-learn', title: 'Scikit-learn' },
+    { value: 'tensorflow', title: 'TensorFlow' },
+    { value: 'keras', title: 'Keras' },
+    { value: 'torch', title: 'PyTorch' },
+  ],
+  'Web Scraping': [
+    { value: 'requests', title: 'Requests' },
+    { value: 'beautifulsoup4', title: 'Beautiful Soup' },
+    { value: 'scrapy', title: 'Scrapy' },
+    { value: 'selenium', title: 'Selenium' },
+    { value: 'lxml', title: 'lxml' },
+  ],
+  'Image Processing': [
+    { value: 'opencv-python', title: 'OpenCV' },
+    { value: 'scikit-image', title: 'scikit-image' },
+    { value: 'mahotas', title: 'Mahotas' },
+    { value: 'SimpleITK', title: 'SimpleITK' },
+    { value: 'Pillow', title: 'Pillow' },
+  ],
+  'Game Development': [
+    { value: 'pygame', title: 'Pygame' },
+    { value: 'pyglet', title: 'Pyglet' },
+    { value: 'PyOpenGL', title: 'PyOpenGL' },
+    { value: 'arcade', title: 'Arcade' },
+    { value: 'panda3d', title: 'Panda3D' },
+  ],
+  'Automation Testing': [
+    { value: 'pytest', title: 'Pytest' },
+    { value: 'splinter', title: 'Splinter' },
+    { value: 'robotframework', title: 'Robot Framework' },
+    { value: 'behave', title: 'Behave' },
+  ],
 };
 
 export const STYLING_OPTIONS = [
@@ -200,9 +268,10 @@ async function stepPackageName(result) {
 async function stepProjectType(result) {
   if (result.projectType) return 'skip';
   const projectType = guardCancel(
-    await select({
+    await autocomplete({
       message: 'What are you building?',
       options: withBack(PROJECT_TYPES.map((t) => ({ value: t.value, label: t.color(t.title) }))),
+      placeholder: 'Type to search...',
     })
   );
   if (projectType === BACK) return 'back';
@@ -221,9 +290,10 @@ async function stepFramework(result) {
       result.framework = frameworkChoices[0].value;
     } else {
       const framework = guardCancel(
-        await select({
+        await autocomplete({
           message: 'Select a framework:',
           options: withBack(toOptions(frameworkChoices)),
+          placeholder: 'Type to search...',
         })
       );
       if (framework === BACK) return 'back';
@@ -275,9 +345,10 @@ async function stepStyling(result) {
   if (result.styling) return 'skip';
 
   const styling = guardCancel(
-    await select({
+    await autocomplete({
       message: 'Styling:',
       options: withBack(toOptions(STYLING_OPTIONS)),
+      placeholder: 'Type to search...',
     })
   );
   if (styling === BACK) return 'back';
@@ -303,13 +374,42 @@ async function stepDatabase(result) {
   if (result.database) return 'skip';
 
   const database = guardCancel(
-    await select({
+    await autocomplete({
       message: 'Database / ORM:',
       options: withBack(toOptions(result.runtime === 'python' ? DATABASE_OPTIONS_PYTHON : DATABASE_OPTIONS)),
+      placeholder: 'Type to search...',
     })
   );
   if (database === BACK) return 'back';
   result.database = database;
+  return 'ok';
+}
+
+/**
+ * AI/ML project type only. A grouped multiselect over the static catalog
+ * above — the same "search live, never bundle" philosophy behind Spring's
+ * dependency picker and stepExtraPackages doesn't apply here since there's
+ * no live "top ML packages" API to query, so this ships a curated list
+ * instead. No "← Back" choice, for the same reason stepSpringDependencies
+ * has none: a multiselect's choices are the answer itself, so there's no
+ * single sentinel value to react to — Ctrl+C and re-running is the way out.
+ */
+async function stepMlLibraries(result) {
+  if (result.framework !== 'python-ml') return 'skip';
+  if (result.mlLibraries !== undefined) return 'skip';
+
+  const options = Object.fromEntries(
+    Object.entries(ML_LIBRARY_GROUPS).map(([group, pkgs]) => [group, toOptions(pkgs)])
+  );
+
+  const mlLibraries = guardCancel(
+    await groupMultiselect({
+      message: 'Library bundles to install (space to toggle, enter to confirm):',
+      options,
+      required: false,
+    })
+  );
+  result.mlLibraries = mlLibraries;
   return 'ok';
 }
 
@@ -436,17 +536,20 @@ async function stepSpringHotReload(result) {
  * Black+Flake8, for Python) are mutually exclusive tools, so a radio choice
  * makes that impossible to violate instead of just discouraged. Java has no
  * equivalent wired up yet — Spring Initializr projects skip this entirely.
+ * Rust skips it too — `cargo fmt`/`cargo clippy` already ship with the
+ * toolchain, so there's no separate tool to choose between.
  */
 async function stepQuality(result) {
-  if (result.runtime === 'java') {
+  if (result.runtime === 'java' || result.runtime === 'rust') {
     result.quality = 'none';
     return 'skip';
   }
   if (result.quality) return 'skip';
   const quality = guardCancel(
-    await select({
+    await autocomplete({
       message: 'Code quality tooling:',
       options: withBack(toOptions(result.runtime === 'python' ? QUALITY_OPTIONS_PYTHON : QUALITY_OPTIONS)),
+      placeholder: 'Type to search...',
     })
   );
   if (quality === BACK) return 'back';
@@ -544,7 +647,7 @@ async function stepDocker(result) {
   return 'ok';
 }
 
-/** Python has no npm-family equivalent (pip in a venv, unconditionally); Java uses whichever build tool was already chosen above — neither has anything left to ask here. */
+/** Python has no npm-family equivalent (pip in a venv, unconditionally); Java uses whichever build tool was already chosen above; Rust always uses Cargo — none of the three has anything left to ask here. */
 async function stepPackageManager(result) {
   if (result.runtime === 'python') {
     result.pm = 'pip';
@@ -554,13 +657,18 @@ async function stepPackageManager(result) {
     result.pm = result.buildTool;
     return 'skip';
   }
+  if (result.runtime === 'rust') {
+    result.pm = 'cargo';
+    return 'skip';
+  }
   if (result.pm) return 'skip';
 
   const pm = guardCancel(
-    await select({
+    await autocomplete({
       message: 'Install dependencies with:',
       options: withBack(PACKAGE_MANAGERS.map((name) => ({ value: name, label: name }))),
       initialValue: detectPackageManager(),
+      placeholder: 'Type to search...',
     })
   );
   if (pm === BACK) return 'back';
@@ -568,9 +676,9 @@ async function stepPackageManager(result) {
   return 'ok';
 }
 
-/** Maven/Gradle's own wrapper resolves dependencies itself on first build — there's no separate "install" step to offer for Java. */
+/** Maven/Gradle's own wrapper resolves dependencies itself on first build, and so does Cargo on first `cargo run` — neither Java nor Rust has a separate "install" step to offer. */
 async function stepInstall(result) {
-  if (result.runtime === 'java') {
+  if (result.runtime === 'java' || result.runtime === 'rust') {
     result.install = false;
     return 'skip';
   }
@@ -598,6 +706,7 @@ const STEPS = [
   stepLanguage,
   stepStyling,
   stepDatabase,
+  stepMlLibraries,
   stepSpringBuildTool,
   stepSpringPackaging,
   stepSpringJavaVersion,
