@@ -1,3 +1,10 @@
+## [3.2.2](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.2.1...v3.2.2) (2026-07-21)
+
+
+### Bug Fixes
+
+* Add Spring Boot scaffolding via start.spring.io ([7bcc277](https://github.com/ChamathDilshanC/create-stack-cli/commit/7bcc27726bb1432f7d04e2e9bee4d5924e3461d6))
+
 ## [3.2.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.2.0...v3.2.1) (2026-07-17)
 
 
