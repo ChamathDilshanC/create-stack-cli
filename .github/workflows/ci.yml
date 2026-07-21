@@ -83,9 +83,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22's bundled npm has a known Arborist bug ("Cannot read
+      # properties of null (reading 'edgesOut')") that reproducibly fails
+      # `npm install` on some scaffolded projects (npm/cli#8261) — Node 24's
+      # newer bundled npm doesn't hit it.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - run: npm ci
 
@@ -134,7 +138,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - run: npm ci
 
