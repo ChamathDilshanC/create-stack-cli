@@ -98,12 +98,36 @@ export const FRAMEWORKS = {
       forceLanguage: 'rust',
       forceDatabase: 'none',
     },
+    // Actix-web: same Rust ecosystem/skips as Axum above, just a different
+    // hand-written Cargo.toml + src/main.rs template — scaffold.js branches
+    // on the framework value to pick the right one.
+    {
+      value: 'rust-actix',
+      title: 'Actix-web (Rust)',
+      scaffolder: 'rust',
+      runtime: 'rust',
+      forceLanguage: 'rust',
+      forceDatabase: 'none',
+    },
   ],
   desktop: [
     { value: 'electron', title: 'Electron', scaffolder: 'electron' },
     { value: 'tauri', title: 'Tauri', scaffolder: 'tauri' },
   ],
-  mobile: [{ value: 'expo', title: 'Expo (React Native)', scaffolder: 'expo' }],
+  mobile: [
+    // Bare React Native via the official Community CLI — no Expo layer.
+    // Its current template ships TypeScript only (no JS flag exists in the
+    // CLI anymore, confirmed against @react-native-community/cli@20.2.0's
+    // own --help), so this forces TS the same way Angular/NestJS do.
+    { value: 'react-native', title: 'React Native', scaffolder: 'react-native', forceLanguage: 'ts' },
+    { value: 'expo', title: 'Expo (React Native)', scaffolder: 'expo' },
+    // Flutter is its own ecosystem entirely — Dart, not JS: no ts/js split,
+    // no npm-family package manager (`flutter create` resolves its own pub
+    // packages), and its own lint/format tooling (flutter_lints +
+    // `flutter analyze`, already wired into every generated project) means
+    // the quality/database/styling questions below are all skipped for it.
+    { value: 'flutter', title: 'Flutter (Dart)', scaffolder: 'flutter', runtime: 'dart', forceLanguage: 'dart' },
+  ],
   // Not a web backend — a plain Python project preloaded with whichever
   // data-science/ML library bundles were picked in stepMlLibraries below.
   // Single entry, same as Mobile: stepFramework auto-selects it, nothing to ask.
@@ -166,6 +190,12 @@ export const STYLING_OPTIONS = [
   { value: 'none', title: 'None' },
 ];
 
+/** Mobile's own styling choice — Tailwind/UnoCSS/CSS Modules are web-only; NativeWind is React Native's Tailwind-compatible equivalent. Not offered for Flutter (a completely different, widget-based styling system) — see stepStyling's runtime check below. */
+export const STYLING_OPTIONS_MOBILE = [
+  { value: 'nativewind', title: 'NativeWind' },
+  { value: 'none', title: 'None' },
+];
+
 export const DATABASE_OPTIONS = [
   { value: 'prisma', title: 'Prisma' },
   { value: 'drizzle', title: 'Drizzle ORM' },
@@ -193,9 +223,9 @@ export const QUALITY_OPTIONS_PYTHON = [
 
 export const PACKAGE_MANAGERS = ['npm', 'yarn', 'pnpm', 'bun'];
 
-/** Styling only makes sense where there's UI to style. */
+/** Styling only makes sense where there's UI to style. Mobile included since NativeWind applies to React Native (bare or Expo) — Flutter opts back out itself, in stepStyling below. */
 export const supportsStyling = (projectType) =>
-  projectType === 'frontend' || projectType === 'fullstack' || projectType === 'desktop';
+  projectType === 'frontend' || projectType === 'fullstack' || projectType === 'desktop' || projectType === 'mobile';
 
 /** A database/ORM only makes sense where there's a server to run it in. */
 export const supportsDatabase = (projectType) => projectType === 'backend' || projectType === 'fullstack';
@@ -351,9 +381,9 @@ async function stepLanguage(result) {
   return 'ok';
 }
 
-/** Only where there's UI to style. */
+/** Only where there's UI to style. Flutter is 'mobile' too but is a widget-based, non-CSS styling system entirely — forced/skipped the same way Java/Rust skip quality below. */
 async function stepStyling(result) {
-  if (!supportsStyling(result.projectType)) {
+  if (!supportsStyling(result.projectType) || result.runtime === 'dart') {
     result.styling = 'none';
     return 'skip';
   }
@@ -362,7 +392,7 @@ async function stepStyling(result) {
   const styling = guardCancel(
     await autocomplete({
       message: 'Styling:',
-      options: withBack(toOptions(STYLING_OPTIONS)),
+      options: withBack(toOptions(result.projectType === 'mobile' ? STYLING_OPTIONS_MOBILE : STYLING_OPTIONS)),
       placeholder: 'Type to search...',
     })
   );
@@ -552,10 +582,13 @@ async function stepSpringHotReload(result) {
  * makes that impossible to violate instead of just discouraged. Java has no
  * equivalent wired up yet — Spring Initializr projects skip this entirely.
  * Rust skips it too — `cargo fmt`/`cargo clippy` already ship with the
- * toolchain, so there's no separate tool to choose between.
+ * toolchain, so there's no separate tool to choose between. Flutter's
+ * `flutter create` already wires up `analysis_options.yaml` + the
+ * `flutter_lints` package (its own `flutter analyze`/`dart format`), so it
+ * skips this the same way.
  */
 async function stepQuality(result) {
-  if (result.runtime === 'java' || result.runtime === 'rust') {
+  if (result.runtime === 'java' || result.runtime === 'rust' || result.runtime === 'dart') {
     result.quality = 'none';
     return 'skip';
   }
@@ -662,7 +695,7 @@ async function stepDocker(result) {
   return 'ok';
 }
 
-/** Python has no npm-family equivalent (pip in a venv, unconditionally); Java uses whichever build tool was already chosen above; Rust always uses Cargo — none of the three has anything left to ask here. */
+/** Python has no npm-family equivalent (pip in a venv, unconditionally); Java uses whichever build tool was already chosen above; Rust always uses Cargo; Flutter's own `flutter create` resolves pub packages itself — none of the four has anything left to ask here. */
 async function stepPackageManager(result) {
   if (result.runtime === 'python') {
     result.pm = 'pip';
@@ -676,13 +709,21 @@ async function stepPackageManager(result) {
     result.pm = 'cargo';
     return 'skip';
   }
+  if (result.runtime === 'dart') {
+    result.pm = 'flutter';
+    return 'skip';
+  }
   if (result.pm) return 'skip';
+
+  // The React Native Community CLI's own `--pm` flag only understands
+  // yarn/npm/bun — no pnpm — so that's the only place the choice is narrowed.
+  const availableManagers = result.framework === 'react-native' ? PACKAGE_MANAGERS.filter((pm) => pm !== 'pnpm') : PACKAGE_MANAGERS;
 
   const pm = guardCancel(
     await autocomplete({
       message: 'Install dependencies with:',
-      options: withBack(PACKAGE_MANAGERS.map((name) => ({ value: name, label: name }))),
-      initialValue: detectPackageManager(),
+      options: withBack(availableManagers.map((name) => ({ value: name, label: name }))),
+      initialValue: availableManagers.includes(detectPackageManager()) ? detectPackageManager() : availableManagers[0],
       placeholder: 'Type to search...',
     })
   );
@@ -691,9 +732,9 @@ async function stepPackageManager(result) {
   return 'ok';
 }
 
-/** Maven/Gradle's own wrapper resolves dependencies itself on first build, and so does Cargo on first `cargo run` — neither Java nor Rust has a separate "install" step to offer. */
+/** Maven/Gradle's own wrapper resolves dependencies itself on first build, so does Cargo on first `cargo run`, and `flutter create` already runs `flutter pub get` as part of scaffolding — none of the three has a separate "install" step to offer. */
 async function stepInstall(result) {
-  if (result.runtime === 'java' || result.runtime === 'rust') {
+  if (result.runtime === 'java' || result.runtime === 'rust' || result.runtime === 'dart') {
     result.install = false;
     return 'skip';
   }

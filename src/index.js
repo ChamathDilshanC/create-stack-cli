@@ -14,6 +14,7 @@ import {
   QUALITY_OPTIONS,
   QUALITY_OPTIONS_PYTHON,
   STYLING_OPTIONS,
+  STYLING_OPTIONS_MOBILE,
   getProjectOptions,
 } from './prompts.js';
 import { scaffoldProject } from './scaffold.js';
@@ -33,6 +34,7 @@ const pkg = require('../package.json');
 
 const PROJECT_TYPE_VALUES = PROJECT_TYPES.map((t) => t.value);
 const STYLING_VALUES = new Set(STYLING_OPTIONS.map((s) => s.value));
+const STYLING_VALUES_MOBILE = new Set(STYLING_OPTIONS_MOBILE.map((s) => s.value));
 const DATABASE_VALUES = new Set(DATABASE_OPTIONS.map((d) => d.value));
 const DATABASE_VALUES_PYTHON = new Set(DATABASE_OPTIONS_PYTHON.map((d) => d.value));
 const QUALITY_VALUES = new Set(QUALITY_OPTIONS.map((q) => q.value));
@@ -51,7 +53,7 @@ function parseArgs() {
     .option('--type <type>', `project type (${PROJECT_TYPE_VALUES.join(', ')})`)
     .option('-f, --framework <name>', 'framework within the chosen type')
     .option('-l, --language <lang>', 'ts or js')
-    .option('-s, --styling <name>', `styling (${[...STYLING_VALUES].join(', ')})`)
+    .option('-s, --styling <name>', `styling (${[...STYLING_VALUES].join(', ')}) — mobile: ${[...STYLING_VALUES_MOBILE].join(', ')}`)
     .option('-d, --database <name>', `database/ORM (${[...DATABASE_VALUES].join(', ')})`)
     .option('-q, --quality <name>', `code quality tooling (${[...QUALITY_VALUES].join(', ')})`)
     .option('--docker', 'add a Dockerfile + docker-compose.yml')
@@ -135,8 +137,12 @@ function buildPreset(cli) {
   }
 
   if (cli.styling) {
-    if (!STYLING_VALUES.has(cli.styling)) {
-      throw new Error(`Unknown --styling "${cli.styling}". Available: ${[...STYLING_VALUES].join(', ')}`);
+    // Mobile's styling choices (NativeWind/None) are a completely different
+    // set from the web ones (Tailwind/UnoCSS/CSS Modules/None) — same
+    // "narrow by what's already known" idea as --database/--quality below.
+    const validStyling = preset.projectType === 'mobile' ? STYLING_VALUES_MOBILE : STYLING_VALUES;
+    if (!validStyling.has(cli.styling)) {
+      throw new Error(`Unknown --styling "${cli.styling}". Available: ${[...validStyling].join(', ')}`);
     }
     preset.styling = cli.styling;
   }
@@ -220,9 +226,10 @@ function assertNonInteractiveComplete(preset, cli) {
   const isPython = frameworkDef?.runtime === 'python';
   const isJava = frameworkDef?.runtime === 'java';
   const isRust = frameworkDef?.runtime === 'rust';
+  const isDart = frameworkDef?.runtime === 'dart';
   const isAi = frameworkDef?.value === 'python-ml';
 
-  const required = ['projectName', 'projectType', 'framework', ...(isPython || isJava || isRust ? [] : ['pm'])];
+  const required = ['projectName', 'projectType', 'framework', ...(isPython || isJava || isRust || isDart ? [] : ['pm'])];
   const missing = required.filter((key) => preset[key] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -250,6 +257,10 @@ function assertNonInteractiveComplete(preset, cli) {
   }
   if (isRust) {
     preset.pm = 'cargo';
+    preset.install = false;
+  }
+  if (isDart) {
+    preset.pm = 'flutter';
     preset.install = false;
   }
   if (isAi && preset.mlLibraries === undefined) preset.mlLibraries = [];
@@ -281,7 +292,7 @@ const VENV_ACTIVATE = process.platform === 'win32' ? '.venv\\Scripts\\activate' 
 
 /** The command that actually starts the dev server, per framework's own convention. */
 function devCommand(options) {
-  const { framework, projectType, pm } = options;
+  const { framework, pm } = options;
 
   if (options.runtime === 'python') {
     if (framework === 'django') return 'python manage.py runserver';
@@ -299,6 +310,13 @@ function devCommand(options) {
     // this doubles as both the "install" step (forced off in prompts.js) and
     // the dev command — there's no separate build step to run first.
     return 'cargo run';
+  }
+
+  if (options.runtime === 'dart') {
+    // Same story as Rust above: `flutter run` (or `flutter create`'s own
+    // `pub get`, already done at scaffold time) covers dependency resolution
+    // — there's no separate install step forced off in prompts.js.
+    return 'flutter run';
   }
 
   if (options.runtime === 'java') {
@@ -325,7 +343,12 @@ function devCommand(options) {
   }
 
   const runPrefix = pm === 'npm' ? 'npm run' : pm;
-  if (projectType === 'mobile') return 'npx expo start';
+  if (framework === 'expo') return 'npx expo start';
+  // Bare React Native has no single "just run it" command — Metro (the
+  // bundler) starts here, but android/ios still need their own native
+  // toolchain (Android Studio/Xcode) via `npm run android`/`npm run ios`
+  // in a second terminal, same as scaffold.js's own warning notes.
+  if (framework === 'react-native') return `${runPrefix} start`;
   if (framework === 'tauri') return `${runPrefix} tauri dev`;
   if (framework === 'electron') return pm === 'npm' ? 'npm start' : `${pm} start`;
   if (framework === 'angular') return `${runPrefix} start`;
@@ -344,8 +367,8 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   if (options.runtime === 'python') {
     steps.push(VENV_ACTIVATE);
     if (!installed) steps.push('pip install -r requirements.txt');
-  } else if (options.runtime === 'java' || options.runtime === 'rust') {
-    // Maven/Gradle's own wrapper (and Cargo, on `cargo run`) resolves dependencies itself on first run — nothing separate to install.
+  } else if (options.runtime === 'java' || options.runtime === 'rust' || options.runtime === 'dart') {
+    // Maven/Gradle's own wrapper (Cargo on `cargo run`, Flutter's own `pub get` at scaffold time) resolves dependencies itself — nothing separate to install.
   } else if (!installed) {
     steps.push(`${options.pm} install`);
   }
@@ -360,7 +383,9 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
           ? 'Java'
           : options.language === 'rust'
             ? 'Rust'
-            : 'JavaScript';
+            : options.language === 'dart'
+              ? 'Dart'
+              : 'JavaScript';
 
   const lines = [
     pc.dim(targetDir),

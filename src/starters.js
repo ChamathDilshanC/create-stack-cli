@@ -216,3 +216,32 @@ export const TAILWIND_STARTERS = {
     obsolete: [],
   },
 };
+
+/**
+ * NativeWind's starter App (Expo and bare React Native both place it at the
+ * project root, so unlike TAILWIND_STARTERS above there's no per-framework
+ * candidate search needed — styling.js's setupNativeWind writes this
+ * directly). Plain JSX with no TS-only syntax, so the same content works
+ * whether the project is TypeScript or JavaScript.
+ */
+export const NATIVEWIND_APP = (lang) => `import { Text, View } from 'react-native';
+import './global.css';
+
+export default function App() {
+  return (
+    <View className="flex-1 items-center justify-center bg-slate-950 p-6">
+      <View className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-10">
+        <Text className="text-center text-sm font-semibold uppercase tracking-widest text-cyan-400">
+          create-stack
+        </Text>
+        <Text className="mt-3 text-center text-3xl font-bold text-white">
+          React Native + NativeWind
+        </Text>
+        <Text className="mt-4 text-center text-slate-400">
+          Edit ${lang === 'ts' ? 'App.tsx' : 'App.js'} and save to reload.
+        </Text>
+      </View>
+    </View>
+  );
+}
+`;

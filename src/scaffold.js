@@ -425,7 +425,7 @@ async function handleBackend(options, warnings) {
   if (framework === 'flask') return handleManualPythonBackend(options, warnings, 'flask');
   if (framework === 'fastapi') return handleManualPythonBackend(options, warnings, 'fastapi');
   if (framework === 'spring') return handleSpringBackend(options, warnings);
-  if (framework === 'rust-axum') return handleRustBackend(options, warnings);
+  if (framework === 'rust-axum' || framework === 'rust-actix') return handleRustBackend(options, warnings);
 
   throw new Error(`Unknown backend framework: ${framework}`);
 }
@@ -741,7 +741,7 @@ async function handleSpringBackend(options, warnings) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Backend — Rust (Axum)                                                */
+/* Backend — Rust (Axum / Actix-web)                                    */
 /* ------------------------------------------------------------------ */
 
 /** Cargo package/binary names: lowercase, digits, hyphens, underscores; must start with a letter or underscore. */
@@ -783,28 +783,63 @@ async fn root() -> Json<Value> {
 }
 `;
 
+const ACTIX_CARGO_TOML = (cargoName) => `[package]
+name = "${cargoName}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+`;
+
+const ACTIX_MAIN_RS = `use actix_web::{get, App, HttpServer, Responder};
+use serde_json::json;
+
+#[get("/")]
+async fn root() -> impl Responder {
+    actix_web::web::Json(json!({ "message": "Hello from Actix-web!" }))
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    println!("Server running at http://localhost:3000");
+    HttpServer::new(|| App::new().service(root))
+        .bind(("0.0.0.0", 3000))?
+        .run()
+        .await
+}
+`;
+
+const RUST_TEMPLATES = {
+  'rust-axum': { label: 'Axum', cargoToml: AXUM_CARGO_TOML, mainRs: AXUM_MAIN_RS },
+  'rust-actix': { label: 'Actix-web', cargoToml: ACTIX_CARGO_TOML, mainRs: ACTIX_MAIN_RS },
+};
+
 /**
- * Axum has no official project-scaffolding CLI (no "cargo new --template
- * axum"), so — like Express/Fastify/Flask/FastAPI above — this writes
- * Cargo.toml + src/main.rs by hand. Cargo itself resolves and builds
- * dependencies on the first `cargo run`/`cargo build`, so unlike every
- * Node/Python backend there's no separate install step to run here (options.install
- * is forced false in prompts.js's stepInstall for this runtime). The
- * enterprise folder layout is skipped too, the same way it is for Spring:
- * it's a Node/Express-shaped convention (controllers/routes/middlewares)
- * that doesn't map onto idiomatic Rust module structure.
+ * Neither Axum nor Actix-web has an official project-scaffolding CLI (no
+ * "cargo new --template axum/actix"), so — like Express/Fastify/Flask/FastAPI
+ * above — this writes Cargo.toml + src/main.rs by hand. Cargo itself resolves
+ * and builds dependencies on the first `cargo run`/`cargo build`, so unlike
+ * every Node/Python backend there's no separate install step to run here
+ * (options.install is forced false in prompts.js's stepInstall for this
+ * runtime). The enterprise folder layout is skipped too, the same way it is
+ * for Spring: it's a Node/Express-shaped convention (controllers/routes/
+ * middlewares) that doesn't map onto idiomatic Rust module structure.
  */
 async function handleRustBackend(options, warnings) {
-  const { targetDir, packageName } = options;
+  const { targetDir, packageName, framework } = options;
   await fs.ensureDir(targetDir);
 
+  const template = RUST_TEMPLATES[framework];
   const cargoName = toCargoPackageName(packageName);
-  await fs.outputFile(path.join(targetDir, 'Cargo.toml'), AXUM_CARGO_TOML(cargoName));
-  await fs.outputFile(path.join(targetDir, 'src', 'main.rs'), AXUM_MAIN_RS);
+  await fs.outputFile(path.join(targetDir, 'Cargo.toml'), template.cargoToml(cargoName));
+  await fs.outputFile(path.join(targetDir, 'src', 'main.rs'), template.mainRs);
   await fs.writeFile(path.join(targetDir, '.gitignore'), '/target\n.env\n');
 
-  logger.dim('  › Wrote Cargo.toml + src/main.rs by hand (Axum has no official project scaffolder).');
-  warnings.push('Rust/Axum projects build via Cargo directly — run "cargo run" to fetch dependencies, compile, and start the server (no separate install step).');
+  logger.dim(`  › Wrote Cargo.toml + src/main.rs by hand (${template.label} has no official project scaffolder).`);
+  warnings.push(`Rust/${template.label} projects build via Cargo directly — run "cargo run" to fetch dependencies, compile, and start the server (no separate install step).`);
 
   if (options.docker) {
     await applyDocker(options, warnings, { flavor: 'rust', binaryName: cargoName, port: 3000 });
@@ -987,9 +1022,10 @@ async function runExpoCreate(options) {
   });
 }
 
-async function handleMobile(options, warnings) {
+async function handleExpoMobile(options, warnings) {
   await runExpoCreate(options);
   await normalizePackageJson(options);
+  await applyStyling(options, warnings);
   await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
   await applyQuality(options, warnings);
 
@@ -1000,6 +1036,137 @@ async function handleMobile(options, warnings) {
   if (options.docker) {
     warnings.push('Docker support was skipped — Expo apps run on-device/in-simulator and are not typically containerized.');
   }
+}
+
+/** RN app names double as native Android/iOS identifiers: letters/digits only, must start with a letter (no hyphens, unlike the folder name). */
+function toReactNativeAppName(packageName) {
+  const base = packageName.replace(/^@[^/]+\//, '').replace(/[^a-zA-Z0-9]/g, '');
+  return /^[A-Za-z]/.test(base) ? base : `App${base}`;
+}
+
+/**
+ * The Community CLI's own `--pm` only understands yarn/npm/bun (pnpm was
+ * already filtered out of the choice itself in prompts.js's
+ * stepPackageManager); `--install-pods false` skips CocoaPods entirely — most
+ * dev machines (and every CI runner) don't have Xcode/CocoaPods, and without
+ * an explicit value the CLI stops to prompt interactively instead of failing
+ * cleanly. `--skip-git-init` and `--skip-install` mirror every other
+ * scaffolder in this file: git/dependency install are handled centrally, not
+ * by the tool itself.
+ */
+async function runReactNativeCreate(options) {
+  const { pm, packageName, targetDir } = options;
+  const { cwd, dirArg } = await scaffolderInvocation(targetDir);
+
+  const appName = toReactNativeAppName(packageName);
+  await runScaffolder({
+    label: 'Scaffolding React Native app with the Community CLI...',
+    success: 'React Native app scaffolded.',
+    command: 'npx',
+    args: [
+      '@react-native-community/cli@latest',
+      'init',
+      appName,
+      '--directory',
+      dirArg,
+      '--pm',
+      pm,
+      '--skip-install',
+      '--install-pods',
+      'false',
+      '--skip-git-init',
+    ],
+    cwd,
+    expectFile: path.join(targetDir, 'package.json'),
+  });
+}
+
+async function handleReactNativeMobile(options, warnings) {
+  await runReactNativeCreate(options);
+  await normalizePackageJson(options);
+  await applyStyling(options, warnings);
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
+
+  // The Community CLI's template already ships a working ESLint 8 setup
+  // (.eslintrc.js + @react-native/eslint-config) — the same situation
+  // Electron Forge's template is in, handled identically below.
+  if (options.quality === 'eslint-prettier') {
+    warnings.push("React Native's own template already ships an ESLint + Prettier config; nothing further was needed.");
+  } else if (options.quality === 'biome') {
+    await applyQuality(options, warnings);
+    warnings.push(
+      "React Native's template also ships its own ESLint config (.eslintrc.js) — remove it if you want Biome to be the only linter."
+    );
+  } else if (options.quality === 'none') {
+    warnings.push("React Native's template always includes its own ESLint + Prettier config; there is no flag to omit it.");
+  } else {
+    await applyQuality(options, warnings);
+  }
+
+  warnings.push(
+    'Scaffolded without a live install (bare React Native has no Expo Go-style runtime, so builds always go through your own Android Studio/Xcode toolchain). Run "npm run android" or "npm run ios" once dependencies are installed.'
+  );
+
+  if (options.docker) {
+    warnings.push('Docker support was skipped — React Native apps run on-device/in-simulator and are not typically containerized.');
+  }
+}
+
+/** Flutter/Dart package names: lowercase_with_underscores, must start with a letter or underscore — Dart's own identifier rules, not npm's. */
+function toFlutterProjectName(packageName) {
+  const base = packageName
+    .replace(/^@[^/]+\//, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return /^[a-z_]/.test(base) ? base || 'app' : `app_${base}`;
+}
+
+/**
+ * `flutter create` is Flutter's own official scaffolder — unlike Express/
+ * Axum/etc., there's a real tool to run here, so this dispatches to it the
+ * same way `ng new`/`django-admin startproject` do. It takes the output
+ * directory directly as its argument (not the parent-dir + leaf-name
+ * convention scaffolderInvocation() sets up for npm-family tools), and
+ * `flutter pub get` runs automatically as part of scaffolding (left at its
+ * default rather than passed --no-pub), which is why prompts.js's
+ * stepInstall skips the install question entirely for this runtime.
+ */
+async function runFlutterCreate(options) {
+  const { targetDir, packageName } = options;
+  const projectName = toFlutterProjectName(packageName);
+
+  await runScaffolder({
+    label: 'Scaffolding Flutter app with flutter create...',
+    success: 'Flutter app scaffolded.',
+    command: 'flutter',
+    args: ['create', '--project-name', projectName, '--org', 'com.example', targetDir],
+    cwd: path.dirname(targetDir),
+    expectFile: path.join(targetDir, 'pubspec.yaml'),
+  });
+}
+
+/**
+ * Flutter's own `lib/`, `android/`, `ios/`, `pubspec.yaml` layout is
+ * idiomatic Dart, not JS — the generic enterprise folder structure doesn't
+ * apply here, the same reasoning Spring Boot's Java-shaped layout skip uses.
+ * Styling, quality, database, and package-manager questions are all forced/
+ * skipped upstream in prompts.js (Flutter uses its own widget-based styling,
+ * ships flutter_lints out of the box, and flutter create already resolved
+ * its own pub packages).
+ */
+async function handleFlutterMobile(options, warnings) {
+  await runFlutterCreate(options);
+
+  if (options.docker) {
+    warnings.push('Docker support was skipped — Flutter apps run on-device/in-simulator and are not typically containerized.');
+  }
+}
+
+async function handleMobile(options, warnings) {
+  if (options.framework === 'flutter') return handleFlutterMobile(options, warnings);
+  if (options.framework === 'react-native') return handleReactNativeMobile(options, warnings);
+  return handleExpoMobile(options, warnings);
 }
 
 /* ------------------------------------------------------------------ */

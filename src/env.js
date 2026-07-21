@@ -39,6 +39,16 @@ const RUST_NOTE =
   '# Plain Rust binaries do not read .env files natively — add the `dotenvy`\n' +
   '# crate and call dotenvy::dotenv().ok() at the start of main() to load these.\n';
 
+/** Bare React Native (unlike Expo, which reads EXPO_PUBLIC_-prefixed vars natively) has no built-in .env support — these still get written for consistency, same as Angular/Java/Rust above. */
+const REACT_NATIVE_NOTE =
+  '# React Native does not read .env files natively — install react-native-dotenv\n' +
+  '# (a Babel plugin) or react-native-config to consume these.\n';
+
+/** Flutter reads compile-time values via --dart-define, not .env files — these still get written for consistency, same as the notes above. */
+const FLUTTER_NOTE =
+  '# Flutter does not read .env files natively — add the flutter_dotenv package\n' +
+  '# and call dotenv.load() in main(), or pass values via --dart-define instead.\n';
+
 /** Each Python backend's own default dev port — Django/FastAPI both default to 8000, Flask to 5000. */
 const PYTHON_PORT = { django: '8000', flask: '5000', fastapi: '8000' };
 
@@ -146,7 +156,17 @@ export async function applyEnvFiles(options, warnings) {
   try {
     const { targetDir, framework, runtime } = options;
     const header =
-      framework === 'angular' ? ANGULAR_NOTE : runtime === 'java' ? JAVA_NOTE : runtime === 'rust' ? RUST_NOTE : '';
+      framework === 'angular'
+        ? ANGULAR_NOTE
+        : framework === 'react-native'
+          ? REACT_NATIVE_NOTE
+          : runtime === 'java'
+            ? JAVA_NOTE
+            : runtime === 'rust'
+              ? RUST_NOTE
+              : runtime === 'dart'
+                ? FLUTTER_NOTE
+                : '';
 
     await mergeEnvFile(path.join(targetDir, '.env'), baseVars(options), { header });
     await mergeEnvFile(path.join(targetDir, '.env.local'), {}, { header });

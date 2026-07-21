@@ -3,6 +3,7 @@ import fs from 'fs-extra';
 
 import {
   ANGULAR_POSTCSS_CONFIG,
+  NATIVEWIND_APP,
   TAILWIND_CSS_ENTRY,
   TAILWIND_STARTERS,
   VITE_CONFIG_WITH_TAILWIND,
@@ -408,6 +409,132 @@ export async function setupUnoCss(options, warnings) {
 }
 
 /* ------------------------------------------------------------------ */
+/* NativeWind (React Native / Expo)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * NativeWind v4 pins its own peer dependency floor on Tailwind v3
+ * (tailwindcss@^3.4.17), not the v4 used everywhere else in this file — the
+ * two config formats (`@tailwind base/components/utilities` vs `@import
+ * "tailwindcss"`) aren't interchangeable, so this intentionally does not
+ * reuse TAILWIND_CSS_ENTRY/TAILWIND_FLOORS above.
+ */
+// react-native-reanimated/react-native-safe-area-context are commonly
+// bundled alongside NativeWind in tutorials, but neither is an actual
+// dependency of the `nativewind` package itself (confirmed against its own
+// registry metadata — its only peer dependency is tailwindcss). Reanimated's
+// current major additionally pins its own peer dependency on a specific
+// react-native-worklets range tied to particular RN versions — a fragile
+// chain not worth taking on for a plain className-styling demo that never
+// touches animations.
+const NATIVEWIND_PACKAGES = ['nativewind'];
+const NATIVEWIND_FLOORS = { nativewind: '^4.2.0' };
+const NATIVEWIND_DEV_PACKAGES = ['tailwindcss'];
+const NATIVEWIND_DEV_FLOORS = { tailwindcss: '^3.4.17' };
+
+const NATIVEWIND_TAILWIND_CONFIG = `/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./App.{js,jsx,ts,tsx}', './src/**/*.{js,jsx,ts,tsx}'],
+  presets: [require('nativewind/preset')],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+`;
+
+const NATIVEWIND_GLOBAL_CSS = `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+`;
+
+const NATIVEWIND_TYPES_DTS = `/// <reference types="nativewind/types" />\n`;
+
+/** Expo's own babel.config.js already sets `presets: ['babel-preset-expo']` — this just adds NativeWind's jsxImportSource + babel preset on top. */
+const NATIVEWIND_BABEL_CONFIG = {
+  expo: `module.exports = function (api) {
+  api.cache(true);
+  return {
+    presets: [['babel-preset-expo', { jsxImportSource: 'nativewind' }], 'nativewind/babel'],
+  };
+};
+`,
+  // Bare RN's own babel.config.js is 'module:@react-native/babel-preset' — no jsxImportSource override needed here, just the nativewind preset alongside it.
+  'react-native': `module.exports = {
+  presets: ['module:@react-native/babel-preset', 'nativewind/babel'],
+};
+`,
+};
+
+const NATIVEWIND_METRO_CONFIG = {
+  expo: `const { getDefaultConfig } = require('expo/metro-config');
+const { withNativeWind } = require('nativewind/metro');
+
+const config = getDefaultConfig(__dirname);
+
+module.exports = withNativeWind(config, { input: './global.css' });
+`,
+  'react-native': `const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const { withNativeWind } = require('nativewind/metro');
+
+const config = mergeConfig(getDefaultConfig(__dirname), {});
+
+module.exports = withNativeWind(config, { input: './global.css' });
+`,
+};
+
+/**
+ * Wires NativeWind into a scaffolded Expo or bare React Native project.
+ * Every config file it touches (babel/metro/tailwind) is fully replaced
+ * rather than patched — same approach as ANGULAR_POSTCSS_CONFIG/
+ * VITE_CONFIG_WITH_TAILWIND above, since these are short, framework-owned
+ * files a JIT text-splice would be fragile against.
+ */
+export async function setupNativeWind(options, warnings) {
+  const { framework, targetDir, language } = options;
+
+  await installOrRecord({
+    options,
+    warnings,
+    packages: NATIVEWIND_PACKAGES,
+    floors: NATIVEWIND_FLOORS,
+    dev: false,
+    label: 'NativeWind',
+  });
+  await installOrRecord({
+    options,
+    warnings,
+    packages: NATIVEWIND_DEV_PACKAGES,
+    floors: NATIVEWIND_DEV_FLOORS,
+    dev: true,
+    label: 'NativeWind (Tailwind)',
+  });
+
+  const spinner = createSpinner('Configuring NativeWind...');
+  try {
+    await fs.writeFile(path.join(targetDir, 'tailwind.config.js'), NATIVEWIND_TAILWIND_CONFIG);
+    await fs.writeFile(path.join(targetDir, 'global.css'), NATIVEWIND_GLOBAL_CSS);
+    await fs.writeFile(path.join(targetDir, 'babel.config.js'), NATIVEWIND_BABEL_CONFIG[framework]);
+    await fs.writeFile(path.join(targetDir, 'metro.config.js'), NATIVEWIND_METRO_CONFIG[framework]);
+    if (language === 'ts') {
+      await fs.writeFile(path.join(targetDir, 'nativewind-env.d.ts'), NATIVEWIND_TYPES_DTS);
+    }
+
+    const appFile = language === 'ts' ? 'App.tsx' : 'App.js';
+    if (await fs.pathExists(path.join(targetDir, appFile))) {
+      await fs.writeFile(path.join(targetDir, appFile), NATIVEWIND_APP(language));
+    } else {
+      warnings.push(`Could not locate ${appFile} to rewrite; NativeWind is configured, but the demo component was skipped.`);
+    }
+
+    spinnerSucceed(spinner, 'NativeWind configured.');
+  } catch (err) {
+    spinnerFail(spinner, 'NativeWind configuration failed.');
+    throw err;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -419,4 +546,5 @@ export async function setupUnoCss(options, warnings) {
 export async function applyStyling(options, warnings) {
   if (options.styling === 'tailwind') return setupTailwind(options, warnings);
   if (options.styling === 'unocss') return setupUnoCss(options, warnings);
+  if (options.styling === 'nativewind') return setupNativeWind(options, warnings);
 }
