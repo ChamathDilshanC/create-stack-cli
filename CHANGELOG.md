@@ -1,3 +1,10 @@
+# [3.3.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.2.2...v3.3.0) (2026-07-21)
+
+
+### Features
+
+* Migrate CLI UI to Clack and enhance Spring ([5a818b7](https://github.com/ChamathDilshanC/create-stack-cli/commit/5a818b7d127dea9bd308fe0693dde47208561dac))
+
 ## [3.2.2](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.2.1...v3.2.2) (2026-07-21)
 
 
