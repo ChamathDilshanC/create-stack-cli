@@ -71,6 +71,22 @@ function logo(width) {
   ];
 }
 
+/**
+ * What actually goes in the left column: the dragon mascot (terminalLogo.js)
+ * on any real TTY, scaled down to fit — a full-size standalone dragon
+ * printed above the whole banner ran taller than a lot of terminal windows
+ * (forcing a zoom-out or a scrollbar just to see the summary box below it),
+ * so it's embedded here instead, right where "Welcome, {username}!" already
+ * is. Falls back to the plain gradient bars logo for non-TTY output (piped
+ * to a file, CI logs, ...), or if rendering the dragon fails for any reason.
+ */
+function leftColumnLogo(width) {
+  const dragonWidth = 20;
+  const lines = renderDragonLines(dragonWidth);
+  if (lines && lines.length > 0) return lines;
+  return logo(width);
+}
+
 /** Two-column layout — left: identity/environment, right: tips/links. */
 function printWideBanner(pkg, columns) {
   const leftWidth = 30;
@@ -85,7 +101,7 @@ function printWideBanner(pkg, columns) {
   const left = [
     pc.bold(truncate(`Welcome, ${username}!`, leftWidth)),
     '',
-    ...centerLogoLines(logo(barWidth), leftWidth),
+    ...centerLogoLines(leftColumnLogo(barWidth), leftWidth),
     '',
     pc.dim(truncate(`Node ${process.version} · ${detectPackageManager()} detected`, leftWidth)),
     pc.dim(truncate(prettyCwd(), leftWidth)),
@@ -186,24 +202,13 @@ function printCompactBanner(pkg, columns) {
 const MIN_TWO_COLUMN_WIDTH = 92;
 
 /**
- * The startup screen. The dragon mascot (terminalLogo.js) prints above
- * everything else, on any real TTY with color support — same layout
- * neofetch itself uses (mascot first, info panel after), and since it's
- * plain colored text rather than a raster image, it renders identically
- * regardless of terminal (no native-image-protocol detection needed). Below
- * that, wide terminals get a two-column layout (identity/bars logo on the
- * left, tips/links on the right, matching the Claude Code / Nuxt CLI style
- * welcome banner); narrow ones fall back to a single stacked box. Piped/
- * non-TTY output (redirected to a file, CI logs, ...) skips the dragon
- * entirely — raw escape codes have no business there — but the box always
- * renders either way.
+ * The startup screen. Wide terminals get a two-column layout (identity/logo
+ * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
+ * style welcome banner) with the dragon mascot embedded in the left column
+ * (see leftColumnLogo above); narrow ones fall back to a single stacked box
+ * without it (there's no left column there to put it in).
  */
 export function printBanner(pkg) {
-  const dragonLines = renderDragonLines();
-  if (dragonLines) {
-    process.stdout.write(`${dragonLines.join('\n')}\n\n`);
-  }
-
   const columns = process.stdout.columns ?? 80;
   if (columns >= MIN_TWO_COLUMN_WIDTH) {
     printWideBanner(pkg, columns);
