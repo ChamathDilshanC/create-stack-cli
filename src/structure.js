@@ -17,6 +17,9 @@ export const FRONTEND_DIRECTORIES = [
   'utils',
 ];
 
+/** Flutter's own layout, generated under `lib/` — Dart-flavored naming (`screens`/`widgets`, not React's `pages`/`hooks`), since `flutter create` itself only ever produces a bare `lib/main.dart`. */
+export const FLUTTER_DIRECTORIES = ['config', 'models', 'screens', 'services', 'utils', 'widgets'];
+
 /** Backend layout — `models` becomes `schema` when Drizzle is the chosen ORM. */
 const BACKEND_DIRECTORIES_BASE = ['config', 'controllers', 'middlewares', 'routes', 'services', 'utils'];
 
@@ -43,11 +46,15 @@ export function modelsDirFor(options, baseDir = 'src') {
  * one of these path segments, a permissions error — is reported as a
  * warning rather than unwinding a scaffold that has otherwise succeeded.
  */
-export async function generateEnterpriseStructure(options, warnings, { baseDir = 'src', exclude = [] } = {}) {
+export async function generateEnterpriseStructure(
+  options,
+  warnings,
+  { baseDir = 'src', exclude = [], directories: directoriesOverride } = {}
+) {
   const spinner = createSpinner('Generating enterprise folder structure...');
   const rootDir = path.join(options.targetDir, baseDir);
   const allDirectories =
-    options.projectType === 'backend' ? backendDirectories(options.database) : FRONTEND_DIRECTORIES;
+    directoriesOverride ?? (options.projectType === 'backend' ? backendDirectories(options.database) : FRONTEND_DIRECTORIES);
   const directories = allDirectories.filter((dir) => !exclude.includes(dir));
 
   try {

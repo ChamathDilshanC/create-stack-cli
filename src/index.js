@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { box, confirm, intro, outro } from '@clack/prompts';
+import { box, confirm, intro, isCancel, outro, select } from '@clack/prompts';
 import { Command } from 'commander';
+import { execa } from 'execa';
 import pc from 'picocolors';
 
 import { printBanner } from './banner.js';
@@ -40,6 +41,21 @@ const DATABASE_VALUES_PYTHON = new Set(DATABASE_OPTIONS_PYTHON.map((d) => d.valu
 const QUALITY_VALUES = new Set(QUALITY_OPTIONS.map((q) => q.value));
 const QUALITY_VALUES_PYTHON = new Set(QUALITY_OPTIONS_PYTHON.map((q) => q.value));
 
+/**
+ * Post-scaffold only — not part of the project decision tree (getProjectOptions),
+ * since it's an action taken on the finished project, not a choice about what
+ * to build. `claude` is a terminal REPL, not a GUI editor, so maybeOpenEditor
+ * below launches it differently (hands over the current terminal via `stdio:
+ * 'inherit'`) instead of spawning it detached like the other three.
+ */
+const CODE_EDITORS = [
+  { value: 'vscode', label: 'VS Code', command: 'code' },
+  { value: 'cursor', label: 'Cursor', command: 'cursor' },
+  { value: 'antigravity', label: 'Antigravity', command: 'antigravity' },
+  { value: 'claude', label: 'Claude Code', command: 'claude' },
+];
+const EDITOR_VALUES = new Set([...CODE_EDITORS.map((e) => e.value), 'none']);
+
 function parseArgs() {
   const program = new Command();
 
@@ -67,6 +83,7 @@ function parseArgs() {
     .option('--extra-packages <list>', 'comma-separated extra packages to add — npm for Node projects, PyPI for Python (Spring Boot: use --dependencies instead)')
     .option('--ml-libraries <list>', 'AI/ML (Python) only: comma-separated PyPI library bundles, e.g. numpy,pandas,scikit-learn')
     .option('--no-install', 'skip automatic dependency installation')
+    .option('--editor <name>', `open the finished project in a code editor when done (${[...EDITOR_VALUES].join(', ')}) — skipped by default under --yes`)
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
     .option('--overwrite', 'overwrite the target directory if it already exists')
     .allowExcessArguments(false)
@@ -92,6 +109,7 @@ function parseArgs() {
     groupId: opts.groupId,
     extraPackages: opts.extraPackages,
     mlLibraries: opts.mlLibraries,
+    editor: opts.editor,
     overwrite: Boolean(opts.overwrite),
     yes: Boolean(opts.yes),
     // Commander gives --no-install/--no-hot-reload a default of `true`; only
@@ -173,6 +191,13 @@ function buildPreset(cli) {
       throw new Error(`Unknown package manager "${cli.pm}". Available: ${PACKAGE_MANAGERS.join(', ')}`);
     }
     preset.pm = cli.pm;
+  }
+
+  // Not a project-decision field (doesn't belong on `preset`/getProjectOptions) —
+  // validated here anyway, alongside every other flag, so a typo fails fast
+  // instead of surfacing only after the whole scaffold has already run.
+  if (cli.editor !== undefined && !EDITOR_VALUES.has(cli.editor)) {
+    throw new Error(`Unknown --editor "${cli.editor}". Available: ${[...EDITOR_VALUES].join(', ')}`);
   }
 
   if (cli.buildTool) {
@@ -409,6 +434,73 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   outro(warnings.length > 0 ? pc.yellow('Done — a few things above need your attention.') : pc.green('Done. Happy building!'));
 }
 
+/**
+ * Runs after the summary box, once the project already exists on disk —
+ * purely optional, never affects the scaffold's own success/failure. Skipped
+ * entirely under --yes unless --editor was passed explicitly (scripts/CI
+ * shouldn't have a GUI window pop up on their own), and a launch failure
+ * (editor not installed, not on PATH) is a warning, not a thrown error —
+ * the project is already fully scaffolded either way.
+ *
+ * GUI editors (VS Code/Cursor/Antigravity) are spawned detached and
+ * `unref()`d so this process can exit on its own right after — that's what
+ * actually "returns" the terminal, since a CLI has no clean, portable way to
+ * close the terminal *window* itself. Claude Code is different: it's a
+ * terminal REPL, not a GUI window, so it gets the current terminal handed
+ * over via `stdio: 'inherit'` and this process waits for it to exit instead.
+ */
+async function maybeOpenEditor(targetDir, cli) {
+  let choice = cli.editor;
+  if (choice === undefined) {
+    if (cli.yes) return;
+    const answer = await select({
+      message: 'Open the project in a code editor?',
+      options: [...CODE_EDITORS.map((e) => ({ value: e.value, label: e.label })), { value: 'none', label: 'None' }],
+      initialValue: 'none',
+    });
+    if (isCancel(answer)) return;
+    choice = answer;
+  }
+  if (choice === 'none') return;
+
+  const editor = CODE_EDITORS.find((e) => e.value === choice);
+
+  if (editor.value === 'claude') {
+    logger.dim(`Launching Claude Code in ${targetDir}...`);
+    // reject: false resolves instead of throwing even when the command isn't
+    // found at all — checking `.failed` is the only way to detect that case.
+    const result = await execa(editor.command, [], { cwd: targetDir, stdio: 'inherit', reject: false });
+    if (result.failed) {
+      logger.warn(`Could not launch Claude Code (${result.shortMessage ?? result.message}) — run "claude" yourself inside ${targetDir}.`);
+    }
+    return;
+  }
+
+  // A missing command fails asynchronously (the returned promise rejects
+  // later), not synchronously, so try/catch around the call itself wouldn't
+  // catch it — racing it against a short timeout instead reports the common
+  // "not installed" failure before this process exits, while a real editor
+  // (which keeps running far longer than 500ms) always wins the race as a
+  // success. Either way, .unref() — called on the same object, since execa's
+  // return value doubles as both a promise and the child-process handle —
+  // lets this process exit on its own without waiting for the detached editor.
+  const subprocess = execa(editor.command, [targetDir], { detached: true, stdio: 'ignore' });
+  const failure = await Promise.race([
+    subprocess.then(
+      () => null,
+      (err) => err
+    ),
+    new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+  ]);
+  subprocess.unref();
+
+  if (failure) {
+    logger.warn(`Could not launch ${editor.label} (${failure.shortMessage ?? failure.message}) — open ${targetDir} manually.`);
+  } else {
+    logger.success(`Opening ${targetDir} in ${editor.label}...`);
+  }
+}
+
 async function main() {
   const cli = parseArgs();
   if (!cli.yes) {
@@ -452,6 +544,7 @@ async function main() {
   }
 
   printSummary(options, { targetDir, cwd, installed, warnings });
+  await maybeOpenEditor(targetDir, cli);
 }
 
 export async function run() {

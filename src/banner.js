@@ -2,6 +2,7 @@ import os from 'node:os';
 import boxen from 'boxen';
 import pc from 'picocolors';
 
+import { tryRenderLogo } from './terminalLogo.js';
 import { detectPackageManager } from './utils.js';
 
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
@@ -181,8 +182,19 @@ const MIN_TWO_COLUMN_WIDTH = 92;
  * The startup screen. Wide terminals get a two-column layout (identity/logo
  * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
  * style welcome banner); narrow ones fall back to a single stacked box.
+ *
+ * On terminals that actually support a native inline-image protocol (Kitty,
+ * iTerm2 — checked via supports-terminal-graphics in terminalLogo.js), the
+ * real assets/Logo.png renders above this box too. Every other terminal
+ * (Windows Terminal, plain xterm, ...) just gets the box below, unchanged —
+ * this is purely additive, never a replacement for it.
  */
 export function printBanner(pkg) {
+  const renderedLogo = tryRenderLogo();
+  if (renderedLogo) {
+    process.stdout.write(`${renderedLogo}\n\n`);
+  }
+
   const columns = process.stdout.columns ?? 80;
   if (columns >= MIN_TWO_COLUMN_WIDTH) {
     printWideBanner(pkg, columns);

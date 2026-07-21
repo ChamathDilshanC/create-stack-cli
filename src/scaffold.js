@@ -10,7 +10,7 @@ import { applyQuality } from './quality.js';
 import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
 import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
 import { generateSpringStructure, scaffoldSpringProject } from './spring.js';
-import { generateEnterpriseStructure, modelsDirFor } from './structure.js';
+import { FLUTTER_DIRECTORIES, generateEnterpriseStructure, modelsDirFor } from './structure.js';
 import { applyStyling } from './styling.js';
 import { commandOutputTail, createSpinner, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
@@ -766,20 +766,41 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 `;
 
-const AXUM_MAIN_RS = `use axum::{routing::get, Json, Router};
-use serde_json::{json, Value};
+const AXUM_MAIN_RS = `mod config;
+mod handlers;
+mod models;
+mod routes;
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new().route("/", get(root));
+    let port = config::port();
+    let app = routes::create_router();
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Server running at http://localhost:3000");
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .unwrap();
+    println!("Server running at http://localhost:{port}");
     axum::serve(listener, app).await.unwrap();
 }
+`;
 
-async fn root() -> Json<Value> {
-    Json(json!({ "message": "Hello from Axum!" }))
+const AXUM_ROUTES_RS = `use axum::{routing::get, Router};
+
+use crate::handlers;
+
+pub fn create_router() -> Router {
+    Router::new().route("/", get(handlers::root))
+}
+`;
+
+const AXUM_HANDLERS_RS = `use axum::Json;
+
+use crate::models::Message;
+
+pub async fn root() -> Json<Message> {
+    Json(Message {
+        message: "Hello from Axum!".to_string(),
+    })
 }
 `;
 
@@ -794,39 +815,95 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 `;
 
-const ACTIX_MAIN_RS = `use actix_web::{get, App, HttpServer, Responder};
-use serde_json::json;
+const ACTIX_MAIN_RS = `mod config;
+mod handlers;
+mod models;
+mod routes;
 
-#[get("/")]
-async fn root() -> impl Responder {
-    actix_web::web::Json(json!({ "message": "Hello from Actix-web!" }))
-}
+use actix_web::{App, HttpServer};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("Server running at http://localhost:3000");
-    HttpServer::new(|| App::new().service(root))
-        .bind(("0.0.0.0", 3000))?
+    let port = config::port();
+    println!("Server running at http://localhost:{port}");
+
+    HttpServer::new(|| App::new().configure(routes::configure))
+        .bind(("0.0.0.0", port))?
         .run()
         .await
 }
 `;
 
+const ACTIX_ROUTES_RS = `use actix_web::web::ServiceConfig;
+
+use crate::handlers;
+
+pub fn configure(cfg: &mut ServiceConfig) {
+    cfg.service(handlers::root);
+}
+`;
+
+const ACTIX_HANDLERS_RS = `use actix_web::{get, web::Json, Responder};
+
+use crate::models::Message;
+
+#[get("/")]
+pub async fn root() -> impl Responder {
+    Json(Message {
+        message: "Hello from Actix-web!".to_string(),
+    })
+}
+`;
+
+/** Shared between Axum and Actix-web — a plain data struct, no framework-specific trait to differ on. */
+const RUST_MODELS_RS = `use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct Message {
+    pub message: String,
+}
+`;
+
+/** Also shared — reads PORT from the environment (wired into .env by env.js), same idea as every other backend's PORT var. */
+const RUST_CONFIG_RS = `use std::env;
+
+pub fn port() -> u16 {
+    env::var("PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(3000)
+}
+`;
+
 const RUST_TEMPLATES = {
-  'rust-axum': { label: 'Axum', cargoToml: AXUM_CARGO_TOML, mainRs: AXUM_MAIN_RS },
-  'rust-actix': { label: 'Actix-web', cargoToml: ACTIX_CARGO_TOML, mainRs: ACTIX_MAIN_RS },
+  'rust-axum': {
+    label: 'Axum',
+    cargoToml: AXUM_CARGO_TOML,
+    mainRs: AXUM_MAIN_RS,
+    routesRs: AXUM_ROUTES_RS,
+    handlersRs: AXUM_HANDLERS_RS,
+  },
+  'rust-actix': {
+    label: 'Actix-web',
+    cargoToml: ACTIX_CARGO_TOML,
+    mainRs: ACTIX_MAIN_RS,
+    routesRs: ACTIX_ROUTES_RS,
+    handlersRs: ACTIX_HANDLERS_RS,
+  },
 };
 
 /**
  * Neither Axum nor Actix-web has an official project-scaffolding CLI (no
  * "cargo new --template axum/actix"), so — like Express/Fastify/Flask/FastAPI
- * above — this writes Cargo.toml + src/main.rs by hand. Cargo itself resolves
+ * above — this writes Cargo.toml + src/*.rs by hand. Cargo itself resolves
  * and builds dependencies on the first `cargo run`/`cargo build`, so unlike
  * every Node/Python backend there's no separate install step to run here
  * (options.install is forced false in prompts.js's stepInstall for this
- * runtime). The enterprise folder layout is skipped too, the same way it is
- * for Spring: it's a Node/Express-shaped convention (controllers/routes/
- * middlewares) that doesn't map onto idiomatic Rust module structure.
+ * runtime). The generic JS-shaped enterprise folder structure is skipped —
+ * same reasoning as Spring Boot — but unlike a bare single-file main.rs, this
+ * still gets its own idiomatic Rust module split (`routes`, `handlers`,
+ * `models`, `config`) mirroring what Spring's own real Java-shaped structure
+ * does: a real, working, organized starting point instead of one big file.
  */
 async function handleRustBackend(options, warnings) {
   const { targetDir, packageName, framework } = options;
@@ -836,9 +913,13 @@ async function handleRustBackend(options, warnings) {
   const cargoName = toCargoPackageName(packageName);
   await fs.outputFile(path.join(targetDir, 'Cargo.toml'), template.cargoToml(cargoName));
   await fs.outputFile(path.join(targetDir, 'src', 'main.rs'), template.mainRs);
+  await fs.outputFile(path.join(targetDir, 'src', 'routes.rs'), template.routesRs);
+  await fs.outputFile(path.join(targetDir, 'src', 'handlers.rs'), template.handlersRs);
+  await fs.outputFile(path.join(targetDir, 'src', 'models.rs'), RUST_MODELS_RS);
+  await fs.outputFile(path.join(targetDir, 'src', 'config.rs'), RUST_CONFIG_RS);
   await fs.writeFile(path.join(targetDir, '.gitignore'), '/target\n.env\n');
 
-  logger.dim(`  › Wrote Cargo.toml + src/main.rs by hand (${template.label} has no official project scaffolder).`);
+  logger.dim(`  › Wrote Cargo.toml + src/{main,routes,handlers,models,config}.rs by hand (${template.label} has no official project scaffolder).`);
   warnings.push(`Rust/${template.label} projects build via Cargo directly — run "cargo run" to fetch dependencies, compile, and start the server (no separate install step).`);
 
   if (options.docker) {
@@ -1147,16 +1228,21 @@ async function runFlutterCreate(options) {
 }
 
 /**
- * Flutter's own `lib/`, `android/`, `ios/`, `pubspec.yaml` layout is
- * idiomatic Dart, not JS — the generic enterprise folder structure doesn't
- * apply here, the same reasoning Spring Boot's Java-shaped layout skip uses.
- * Styling, quality, database, and package-manager questions are all forced/
- * skipped upstream in prompts.js (Flutter uses its own widget-based styling,
- * ships flutter_lints out of the box, and flutter create already resolved
- * its own pub packages).
+ * Flutter's own `android/`, `ios/`, `pubspec.yaml` layout is idiomatic Dart,
+ * not JS, so the generic (JS-shaped) enterprise structure doesn't apply
+ * as-is — same reasoning Spring Boot's Java-shaped layout skip uses. But
+ * `flutter create` on its own only ever produces a bare `lib/main.dart`, so
+ * — mirroring Spring's own real Java-shaped structure rather than skipping
+ * wholesale — this still adds a Dart-flavored folder set under `lib/`
+ * (FLUTTER_DIRECTORIES in structure.js: config/models/screens/services/
+ * utils/widgets). Styling, quality, database, and package-manager questions
+ * are all forced/skipped upstream in prompts.js (Flutter uses its own
+ * widget-based styling, ships flutter_lints out of the box, and flutter
+ * create already resolved its own pub packages).
  */
 async function handleFlutterMobile(options, warnings) {
   await runFlutterCreate(options);
+  await generateEnterpriseStructure(options, warnings, { baseDir: 'lib', directories: FLUTTER_DIRECTORIES });
 
   if (options.docker) {
     warnings.push('Docker support was skipped — Flutter apps run on-device/in-simulator and are not typically containerized.');

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ChamathDilshanC/create-stack-cli/main/assets/Logo.png" alt="create-stack logo" width="160" />
+</p>
+
 # create-stack
 
 [![npm version](https://img.shields.io/npm/v/%40chamathdilshanc%2Fcreate-stack.svg)](https://www.npmjs.com/package/@chamathdilshanc/create-stack)
@@ -59,6 +63,8 @@ Most scaffolders fall into one of two camps: a single-framework tool that does o
 - **Auto-installs dependencies** with your package manager of choice — npm, yarn, pnpm, bun — or pip inside a fresh venv for Python.
 - **Extra packages, searched live** — an optional step for every Node or Python project type: search the live npm registry (or check a name against PyPI) and add whatever you find, the same "search and add, never bundle a list" idea as Spring Boot's dependency picker, extended to every other ecosystem this CLI touches.
 - **One connected terminal UI, start to finish** — built on [`@clack/prompts`](https://github.com/bombshell-dev/clack) (the same engine behind `create-astro`, `sv create`, and shadcn/ui's CLI), so every question, spinner, and the closing summary render as a single continuous thread instead of a patchwork of differently-styled prompts.
+- **A real logo, on terminals that can show one** — Kitty and iTerm2 (and anything using their graphics protocols — WezTerm, Ghostty, recent Konsole, VS Code's integrated terminal on 1.80+) render `assets/Logo.png` as an actual inline image above the startup banner; every other terminal just gets the plain ASCII bars logo, unchanged.
+- **Open in a code editor when done** — VS Code, Cursor, Antigravity, or Claude Code, picked interactively after the summary (or preset via `--editor`) — see [Opening the project in a code editor](#opening-the-project-in-a-code-editor).
 - **Non-interactive mode** via CLI flags, for scripting and CI.
 - **Never leaves you stranded** — a failed network install, an existing non-empty directory, Ctrl+C mid-prompt: every one of these ends in a clear message and a project you can still finish setting up by hand, not a stack trace.
 
@@ -201,7 +207,7 @@ npx @chamathdilshanc/create-stack my-api \
 | `--type <type>` | Project type: `frontend`, `fullstack`, `backend`, `desktop`, `mobile`, `ai` |
 | `-f, --framework <name>` | Framework within the chosen type (see the table above) |
 | `-l, --language <lang>` | `ts` or `js` — ignored (and unnecessary) for Python/Java/Rust/Dart frameworks, and for bare React Native (TypeScript-only) |
-| `-s, --styling <name>` | `tailwind`, `unocss`, `css-modules`, `none` |
+| `-s, --styling <name>` | `tailwind`, `unocss`, `css-modules`, `none` — Mobile: `nativewind`, `none` |
 | `-d, --database <name>` | Node: `prisma`, `drizzle`, `mongoose`, `none` · Python: `sqlalchemy`, `none` — ignored for Spring Boot (use `--dependencies` instead) and Rust (always `none`) |
 | `-q, --quality <name>` | Node: `eslint-prettier`, `biome`, `none` · Python: `ruff`, `black-flake8`, `none` — ignored for Spring Boot and Rust (always `none`) |
 | `--docker` | Add a Dockerfile + `docker-compose.yml` |
@@ -215,10 +221,17 @@ npx @chamathdilshanc/create-stack my-api \
 | `--extra-packages <list>` | Comma-separated extra packages, verified live before adding — npm for Node projects, PyPI for Python (Spring Boot: use `--dependencies` instead) |
 | `--ml-libraries <list>` | AI/ML (Python) only: comma-separated PyPI library bundles (e.g. `numpy,pandas,scikit-learn`) — see [AI/ML's library picker](#aimls-library-picker) for the full curated catalog |
 | `--no-install` | Skip automatic dependency installation |
+| `--editor <name>` | Open the finished project in a code editor when done: `vscode`, `cursor`, `antigravity`, `claude`, `none` — asked interactively when omitted (unless `-y`/`--yes`, which skips it by default); see [Opening the project in a code editor](#opening-the-project-in-a-code-editor) below |
 | `-y, --yes` | Skip prompts; fails if a required option isn't supplied via flags |
 | `--overwrite` | Overwrite the target directory if it already exists, without prompting |
 | `-V, --version` | Print the CLI version |
 | `-h, --help` | Print usage |
+
+### Opening the project in a code editor
+
+The last question this CLI ever asks — after the project is already fully scaffolded, so a "No" (or a `Ctrl+C`) here never affects anything before it: VS Code, Cursor, Antigravity, Claude Code, or None. Picking one launches that editor's own CLI (`code`, `cursor`, `antigravity`, or `claude`) pointed at the new project directory. VS Code/Cursor/Antigravity are spawned as detached background processes, so this CLI exits right after asking it to open — that's what actually returns you to a usable prompt, since a CLI has no clean, portable way to close the terminal *window* itself. Claude Code is different: it's a terminal program, not a GUI window, so the current terminal is handed over to it directly (`stdio: inherit`) instead, and this CLI's own process waits until you exit that Claude Code session.
+
+Skipped automatically under `-y`/`--yes` (a script or CI run shouldn't have a GUI editor pop up on its own) unless `--editor <name>` is passed explicitly, in which case it always runs — useful for e.g. `create-stack my-app --type frontend -f react -y --editor vscode` in a one-liner. If the chosen editor isn't installed or isn't on `PATH`, this prints a warning and moves on — same "never leaves you stranded" rule as everything else in this CLI.
 
 ## Recipes
 
@@ -281,7 +294,7 @@ Every scaffold, regardless of type, ends up with:
 - **A feature-sliced folder structure**, `.gitkeep`-tracked so empty directories survive being cloned:
 
   ```text
-  # Frontend / Fullstack / Desktop / Mobile
+  # Frontend / Fullstack / Desktop / React Native / Expo
   src/
   ├── assets/       ├── hooks/      ├── services/
   ├── components/   ├── layouts/    ├── store/
@@ -298,7 +311,11 @@ Every scaffold, regardless of type, ends up with:
   \* omitted for Next.js specifically — its App Router owns that name at the project root already.
   \*\* becomes `schema/` automatically when Drizzle is the chosen ORM.
 
-  Spring Boot gets its own Java-shaped equivalent instead of this exact layout: `controller/`, `service/`, `dto/`, `repository/`, `model/`, `config/`, `exception/` as real packages under `src/main/java/...` — see [Spring Boot's dependency picker](#spring-boots-dependency-picker) above for what gets seeded with working code versus left as an empty package. The generic Node-oriented database step is skipped either way; Spring's own dependency catalog covers that instead. Rust (Axum/Actix-web) and Flutter skip it too — both have their own idiomatic project layout (Cargo's module system; Flutter's `lib/`/`android/`/`ios/`) that this JS-shaped structure doesn't map onto.
+  A few frameworks get their own idiomatic equivalent instead of this exact layout, rather than skipping structure entirely:
+
+  - **Spring Boot**: `controller/`, `service/`, `dto/`, `repository/`, `model/`, `config/`, `exception/` as real packages under `src/main/java/...` — see [Spring Boot's dependency picker](#spring-boots-dependency-picker) above for what gets seeded with working code versus left as an empty package. The generic Node-oriented database step is skipped; Spring's own dependency catalog covers that instead.
+  - **Rust (Axum/Actix-web)**: `src/main.rs`, `src/routes.rs`, `src/handlers.rs`, `src/models.rs`, `src/config.rs` — a real, working, modular split (not one big file), verified with `cargo check` against both frameworks.
+  - **Flutter**: `lib/config/`, `lib/models/`, `lib/screens/`, `lib/services/`, `lib/utils/`, `lib/widgets/` — Dart-flavored naming (`screens`/`widgets`, not React's `pages`/`hooks`), since `flutter create` on its own only ever produces a bare `lib/main.dart`.
 
 - **Three environment files** — `.env` (safe defaults, meant to be committed), `.env.local` (empty, always gitignored, yours to fill in with real secrets), and `.env.production` (production-shaped placeholders) — each with the right variables for what you picked: `PORT`/`NODE_ENV` for a Node server, `PORT`/`ENVIRONMENT` for Python, `SERVER_PORT`/`SPRING_PROFILES_ACTIVE` for Spring Boot, `PORT`/`RUST_LOG` for Rust, `ENVIRONMENT` for AI/ML, `${PREFIX}API_URL`/`${PREFIX}APP_NAME` for anything with a UI, where `${PREFIX}` is whatever that framework's bundler actually requires (`VITE_`, `NEXT_PUBLIC_`, and so on) to expose it to client code at all.
 - **A "Next steps" summary** tailored to what you built — the right install command if you skipped it, the right dev command (`npm run dev`, `ng serve`, `python manage.py runserver`, `uvicorn app.main:app --reload`, `./mvnw spring-boot:run`, `cargo run`, `flutter run`, `npm run tauri dev`, `npx expo start`...), and a plain-English explanation of anything that couldn't be fully automated (an offline install, a framework that already ships its own linter, a tool that always makes a network call regardless of `--no-install`).
