@@ -1,3 +1,10 @@
+# [3.8.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.7.0...v3.8.0) (2026-07-21)
+
+
+### Features
+
+* replace the terminal logo with a Braille dragon mascot ([fe682e1](https://github.com/ChamathDilshanC/create-stack-cli/commit/fe682e174594c811b59f78565666ea3808d79cc6)), closes [#9b5de5](https://github.com/ChamathDilshanC/create-stack-cli/issues/9b5de5) [#5a189](https://github.com/ChamathDilshanC/create-stack-cli/issues/5a189) [#c77](https://github.com/ChamathDilshanC/create-stack-cli/issues/c77) [dff/#e0](https://github.com/ChamathDilshanC/create-stack-cli/issues/e0)
+
 # [3.7.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.6.1...v3.7.0) (2026-07-21)
 
 
