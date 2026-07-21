@@ -265,12 +265,27 @@ async function stepPackageName(result) {
   return 'ok';
 }
 
+/**
+ * Each option's `hint` lists every framework that project type contains
+ * (e.g. Frontend → "React, Vue, Angular, Svelte, SolidJS") — clack's
+ * autocomplete filter matches against label AND hint, so typing a framework
+ * name ("django", "vue", "nestjs") surfaces its parent category here too,
+ * not just a project type's own name. The hint itself only renders next to
+ * whichever option is currently focused, so it doubles as a quick "what's
+ * in here" preview while arrowing through the list.
+ */
 async function stepProjectType(result) {
   if (result.projectType) return 'skip';
   const projectType = guardCancel(
     await autocomplete({
       message: 'What are you building?',
-      options: withBack(PROJECT_TYPES.map((t) => ({ value: t.value, label: t.color(t.title) }))),
+      options: withBack(
+        PROJECT_TYPES.map((t) => ({
+          value: t.value,
+          label: t.color(t.title),
+          hint: FRAMEWORKS[t.value].map((f) => f.title).join(', '),
+        }))
+      ),
       placeholder: 'Type to search...',
     })
   );
