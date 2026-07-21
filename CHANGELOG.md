@@ -1,3 +1,10 @@
+## [3.3.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.3.0...v3.3.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* Add live extra package selection and install ([5508033](https://github.com/ChamathDilshanC/create-stack-cli/commit/55080330c15bb74ffe100f440f391443a3b12db6))
+
 # [3.3.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.2.2...v3.3.0) (2026-07-21)
 
 
