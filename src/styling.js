@@ -251,7 +251,7 @@ export async function setupTailwind(options, warnings) {
     label: 'Tailwind CSS',
   });
 
-  const spinner = createSpinner('Configuring Tailwind CSS...', { indent: 2 });
+  const spinner = createSpinner('Configuring Tailwind CSS...');
   try {
     if (isAngular) {
       await fs.writeFile(path.join(targetDir, '.postcssrc.json'), ANGULAR_POSTCSS_CONFIG);
@@ -370,7 +370,7 @@ export async function setupUnoCss(options, warnings) {
     label: 'UnoCSS',
   });
 
-  const spinner = createSpinner('Configuring UnoCSS...', { indent: 2 });
+  const spinner = createSpinner('Configuring UnoCSS...');
   try {
     const configExt = language === 'ts' ? 'ts' : 'js';
     await fs.writeFile(path.join(targetDir, `uno.config.${configExt}`), UNO_CONFIG);

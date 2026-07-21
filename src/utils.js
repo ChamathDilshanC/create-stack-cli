@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import ora from 'ora';
 import pc from 'picocolors';
+import { cancel, isCancel, spinner as clackSpinner } from '@clack/prompts';
 
 /**
  * Thrown when the user cancels an interactive prompt (e.g. Ctrl+C).
@@ -12,6 +12,21 @@ export class CancelledError extends Error {
     super(message);
     this.name = 'CancelledError';
   }
+}
+
+/**
+ * Every clack prompt (select, text, confirm, autocompleteMultiselect...)
+ * resolves to its own cancel symbol instead of throwing when the user hits
+ * Ctrl+C — this is the one place that turns that symbol into the same
+ * CancelledError every other cancellation path in this CLI already throws,
+ * so call sites just do `guardCancel(await select({...}))` and move on.
+ */
+export function guardCancel(value) {
+  if (isCancel(value)) {
+    cancel('Scaffold cancelled.');
+    throw new CancelledError('Scaffold cancelled.');
+  }
+  return value;
 }
 
 export const logger = {
@@ -80,41 +95,23 @@ export function detectPackageManager() {
 }
 
 /**
- * This CLI's own spinner cadence — the sparkle cycle Claude Code's CLI
- * itself "thinks" with — swapped in for ora's default dots so every running
- * step (there are a dozen-plus of these across the codebase) looks the same.
- * Every spinner should be created through this instead of calling ora()
- * directly, so that stays true without threading options through each site.
+ * Every spinner in this CLI is created through here instead of calling
+ * clack's spinner() directly, so the whole run — from the first question to
+ * the last file written — stays one continuous clack-rendered thread instead
+ * of mixing in a different library's own spinner styling.
  */
-const SPARKLE_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
-
-export function createSpinner(text, { indent = 0 } = {}) {
-  return ora({ text, indent, color: 'cyan', spinner: { interval: 90, frames: SPARKLE_FRAMES } }).start();
-}
-
-/**
- * Freezes a finished spinner into Claude Code's own two-line tool-call
- * grammar (⏺ label / ⎿ result) instead of ora's single-line replace — the
- * label that was running stays visible above the outcome, exactly like every
- * tool call in Claude Code's own transcript. Two spaces (not one) after ⏺:
- * it's in the same "ambiguous width" territory as ora's own ✔/✖ (plenty of
- * terminal/font combinations render it two columns wide), so a single
- * trailing space risks getting eaten and gluing the symbol onto the label.
- */
-function finishSpinner(spinner, color, resultText) {
-  const pad = ' '.repeat(spinner.indent ?? 0);
-  const label = spinner.text;
-  spinner.stop();
-  console.log(`${pad}${color('⏺')}  ${label}`);
-  console.log(`${pad}   ${pc.dim('⎿')}  ${color(resultText)}`);
+export function createSpinner(text) {
+  const spinner = clackSpinner();
+  spinner.start(text);
+  return spinner;
 }
 
 export function spinnerSucceed(spinner, text) {
-  finishSpinner(spinner, pc.green, text);
+  spinner.stop(text);
 }
 
 export function spinnerFail(spinner, text) {
-  finishSpinner(spinner, pc.red, text);
+  spinner.error(text);
 }
 
 /**

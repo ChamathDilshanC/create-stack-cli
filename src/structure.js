@@ -44,7 +44,7 @@ export function modelsDirFor(options, baseDir = 'src') {
  * warning rather than unwinding a scaffold that has otherwise succeeded.
  */
 export async function generateEnterpriseStructure(options, warnings, { baseDir = 'src', exclude = [] } = {}) {
-  const spinner = createSpinner('Generating enterprise folder structure...', { indent: 2 });
+  const spinner = createSpinner('Generating enterprise folder structure...');
   const rootDir = path.join(options.targetDir, baseDir);
   const allDirectories =
     options.projectType === 'backend' ? backendDirectories(options.database) : FRONTEND_DIRECTORIES;

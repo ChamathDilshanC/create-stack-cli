@@ -1,11 +1,11 @@
 import path from 'node:path';
-import prompts from 'prompts';
 import pc from 'picocolors';
+import { autocompleteMultiselect, select, text } from '@clack/prompts';
 import { getSpringChoices } from './spring.js';
 import {
-  CancelledError,
   detectPackageManager,
   formatTargetDir,
+  guardCancel,
   isValidPackageName,
   toValidPackageName,
 } from './utils.js';
@@ -131,17 +131,16 @@ export const supportsStyling = (projectType) =>
 /** A database/ORM only makes sense where there's a server to run it in. */
 export const supportsDatabase = (projectType) => projectType === 'backend' || projectType === 'fullstack';
 
-function onCancel() {
-  throw new CancelledError('Scaffold cancelled.');
-}
-
 /** Sentinel a select-style step resolves to when the user picks "← Back" instead of answering. */
 const BACK = Symbol('back');
 
-/** Appends a "← Back" choice to a list of select choices. Always last, so existing `initial` indexes stay valid. */
-function withBack(choices) {
-  return [...choices, { title: pc.dim('← Back'), value: BACK }];
+/** Appends a "← Back" choice to a list of clack `{ value, label }` options. Always last, so existing `initialValue`s stay valid. */
+function withBack(options) {
+  return [...options, { value: BACK, label: pc.dim('← Back') }];
 }
+
+/** This codebase's `{ value, title }` shape → clack's own `{ value, label }` option shape. */
+const toOptions = (choices) => choices.map((c) => ({ value: c.value, label: c.title }));
 
 function getFrameworkDef(result) {
   const frameworkChoices = FRAMEWORKS[result.projectType];
@@ -166,19 +165,14 @@ function getFrameworkDef(result) {
 
 async function stepProjectName(result) {
   if (result.projectName) return 'skip';
-  const { projectName } = await prompts(
-    {
-      type: 'text',
-      name: 'projectName',
+  const projectName = guardCancel(
+    await text({
       message: 'Project name:',
-      initial: 'my-app',
-      onState: (state) => {
-        state.value = formatTargetDir(state.value) || 'my-app';
-      },
-    },
-    { onCancel }
+      placeholder: 'my-app',
+      defaultValue: 'my-app',
+    })
   );
-  result.projectName = projectName;
+  result.projectName = formatTargetDir(projectName) || 'my-app';
   return 'ok';
 }
 
@@ -191,15 +185,12 @@ async function stepPackageName(result) {
     return 'skip';
   }
 
-  const { overwritePackageName } = await prompts(
-    {
-      type: 'text',
-      name: 'overwritePackageName',
+  const overwritePackageName = guardCancel(
+    await text({
       message: 'Package name:',
-      initial: toValidPackageName(computedPackageName),
-      validate: (name) => isValidPackageName(name) || 'Invalid package.json name.',
-    },
-    { onCancel }
+      initialValue: toValidPackageName(computedPackageName),
+      validate: (name) => (isValidPackageName(name) ? undefined : 'Invalid package.json name.'),
+    })
   );
   result.packageName = overwritePackageName;
   return 'ok';
@@ -207,14 +198,11 @@ async function stepPackageName(result) {
 
 async function stepProjectType(result) {
   if (result.projectType) return 'skip';
-  const { projectType } = await prompts(
-    {
-      type: 'select',
-      name: 'projectType',
+  const projectType = guardCancel(
+    await select({
       message: 'What are you building?',
-      choices: withBack(PROJECT_TYPES.map((t) => ({ title: t.color(t.title), value: t.value }))),
-    },
-    { onCancel }
+      options: withBack(PROJECT_TYPES.map((t) => ({ value: t.value, label: t.color(t.title) }))),
+    })
   );
   if (projectType === BACK) return 'back';
   result.projectType = projectType;
@@ -231,14 +219,11 @@ async function stepFramework(result) {
     if (frameworkChoices.length === 1) {
       result.framework = frameworkChoices[0].value;
     } else {
-      const { framework } = await prompts(
-        {
-          type: 'select',
-          name: 'framework',
+      const framework = guardCancel(
+        await select({
           message: 'Select a framework:',
-          choices: withBack(frameworkChoices.map((f) => ({ title: f.title, value: f.value }))),
-        },
-        { onCancel }
+          options: withBack(toOptions(frameworkChoices)),
+        })
       );
       if (framework === BACK) return 'back';
       result.framework = framework;
@@ -256,7 +241,7 @@ async function stepFramework(result) {
   return prompted ? 'ok' : 'skip';
 }
 
-/** Hidden entirely when the framework forces one (Angular, NestJS, every Python framework). */
+/** Hidden entirely when the framework forces one (Angular, NestJS, every Python/Java framework). */
 async function stepLanguage(result) {
   const frameworkDef = getFrameworkDef(result);
   if (frameworkDef.forceLanguage) {
@@ -265,18 +250,15 @@ async function stepLanguage(result) {
   }
   if (result.language) return 'skip';
 
-  const { language } = await prompts(
-    {
-      type: 'select',
-      name: 'language',
+  const language = guardCancel(
+    await select({
       message: 'Language:',
-      choices: withBack([
-        { title: 'TypeScript', value: 'ts' },
-        { title: 'JavaScript', value: 'js' },
+      options: withBack([
+        { value: 'ts', label: 'TypeScript' },
+        { value: 'js', label: 'JavaScript' },
       ]),
-      initial: 0,
-    },
-    { onCancel }
+      initialValue: 'ts',
+    })
   );
   if (language === BACK) return 'back';
   result.language = language;
@@ -291,14 +273,11 @@ async function stepStyling(result) {
   }
   if (result.styling) return 'skip';
 
-  const { styling } = await prompts(
-    {
-      type: 'select',
-      name: 'styling',
+  const styling = guardCancel(
+    await select({
       message: 'Styling:',
-      choices: withBack(STYLING_OPTIONS),
-    },
-    { onCancel }
+      options: withBack(toOptions(STYLING_OPTIONS)),
+    })
   );
   if (styling === BACK) return 'back';
   result.styling = styling;
@@ -322,14 +301,11 @@ async function stepDatabase(result) {
   }
   if (result.database) return 'skip';
 
-  const { database } = await prompts(
-    {
-      type: 'select',
-      name: 'database',
+  const database = guardCancel(
+    await select({
       message: 'Database / ORM:',
-      choices: withBack(result.runtime === 'python' ? DATABASE_OPTIONS_PYTHON : DATABASE_OPTIONS),
-    },
-    { onCancel }
+      options: withBack(toOptions(result.runtime === 'python' ? DATABASE_OPTIONS_PYTHON : DATABASE_OPTIONS)),
+    })
   );
   if (database === BACK) return 'back';
   result.database = database;
@@ -343,17 +319,14 @@ async function stepSpringBuildTool(result) {
   if (!isSpring(result)) return 'skip';
   if (result.buildTool) return 'skip';
 
-  const { buildTool } = await prompts(
-    {
-      type: 'select',
-      name: 'buildTool',
+  const buildTool = guardCancel(
+    await select({
       message: 'Build tool:',
-      choices: withBack([
-        { title: 'Maven', value: 'maven' },
-        { title: 'Gradle', value: 'gradle' },
+      options: withBack([
+        { value: 'maven', label: 'Maven' },
+        { value: 'gradle', label: 'Gradle' },
       ]),
-    },
-    { onCancel }
+    })
   );
   if (buildTool === BACK) return 'back';
   result.buildTool = buildTool;
@@ -364,18 +337,15 @@ async function stepSpringPackaging(result) {
   if (!isSpring(result)) return 'skip';
   if (result.packaging) return 'skip';
 
-  const { packaging } = await prompts(
-    {
-      type: 'select',
-      name: 'packaging',
+  const packaging = guardCancel(
+    await select({
       message: 'Packaging:',
-      choices: withBack([
-        { title: 'Jar', value: 'jar' },
-        { title: 'War', value: 'war' },
+      options: withBack([
+        { value: 'jar', label: 'Jar' },
+        { value: 'war', label: 'War' },
       ]),
-      initial: 0,
-    },
-    { onCancel }
+      initialValue: 'jar',
+    })
   );
   if (packaging === BACK) return 'back';
   result.packaging = packaging;
@@ -398,15 +368,12 @@ async function stepSpringJavaVersion(result) {
   const catalog = await getSpringChoices(result.promptWarnings);
   result._springDependencyChoices = catalog.dependencies;
 
-  const { javaVersion } = await prompts(
-    {
-      type: 'select',
-      name: 'javaVersion',
+  const javaVersion = guardCancel(
+    await select({
       message: 'Java version:',
-      choices: withBack(catalog.javaVersions.map((v) => ({ title: v, value: v }))),
-      initial: 0,
-    },
-    { onCancel }
+      options: withBack(catalog.javaVersions.map((v) => ({ value: v, label: v }))),
+      initialValue: catalog.javaVersions[0],
+    })
   );
   if (javaVersion === BACK) return 'back';
   result.javaVersion = javaVersion;
@@ -425,18 +392,41 @@ async function stepSpringDependencies(result) {
   if (!isSpring(result)) return 'skip';
   if (result.springDependencies) return 'skip';
 
-  const { dependencies } = await prompts(
-    {
-      type: 'autocompleteMultiselect',
-      name: 'dependencies',
+  const dependencies = guardCancel(
+    await autocompleteMultiselect({
       message: 'Dependencies (type to search, space to toggle, enter to confirm):',
-      choices: result._springDependencyChoices,
-      instructions: false,
-    },
-    { onCancel }
+      options: result._springDependencyChoices,
+      placeholder: 'Type to search...',
+      required: false,
+    })
   );
   delete result._springDependencyChoices;
-  result.springDependencies = dependencies ?? [];
+  result.springDependencies = dependencies;
+  return 'ok';
+}
+
+/**
+ * Spring Boot's own answer to nodemon: spring-boot-devtools restarts the app
+ * automatically once it detects recompiled classes, and (paired with
+ * Gradle's `--continuous` flag — wired into the dev command in index.js)
+ * gives a genuine watch-and-reload loop with nothing extra to install.
+ */
+async function stepSpringHotReload(result) {
+  if (!isSpring(result)) return 'skip';
+  if (result.springHotReload !== undefined) return 'skip';
+
+  const springHotReload = guardCancel(
+    await select({
+      message: 'Hot reload (auto-restart on code changes, via DevTools)?',
+      options: withBack([
+        { value: true, label: 'Yes' },
+        { value: false, label: 'No' },
+      ]),
+      initialValue: true,
+    })
+  );
+  if (springHotReload === BACK) return 'back';
+  result.springHotReload = springHotReload;
   return 'ok';
 }
 
@@ -452,14 +442,11 @@ async function stepQuality(result) {
     return 'skip';
   }
   if (result.quality) return 'skip';
-  const { quality } = await prompts(
-    {
-      type: 'select',
-      name: 'quality',
+  const quality = guardCancel(
+    await select({
       message: 'Code quality tooling:',
-      choices: withBack(result.runtime === 'python' ? QUALITY_OPTIONS_PYTHON : QUALITY_OPTIONS),
-    },
-    { onCancel }
+      options: withBack(toOptions(result.runtime === 'python' ? QUALITY_OPTIONS_PYTHON : QUALITY_OPTIONS)),
+    })
   );
   if (quality === BACK) return 'back';
   result.quality = quality;
@@ -468,18 +455,15 @@ async function stepQuality(result) {
 
 async function stepDocker(result) {
   if (result.docker !== undefined) return 'skip';
-  const { docker } = await prompts(
-    {
-      type: 'select',
-      name: 'docker',
+  const docker = guardCancel(
+    await select({
       message: 'Add Docker support (Dockerfile + docker-compose.yml)?',
-      choices: withBack([
-        { title: 'No', value: false },
-        { title: 'Yes', value: true },
+      options: withBack([
+        { value: false, label: 'No' },
+        { value: true, label: 'Yes' },
       ]),
-      initial: 0,
-    },
-    { onCancel }
+      initialValue: false,
+    })
   );
   if (docker === BACK) return 'back';
   result.docker = docker;
@@ -498,15 +482,12 @@ async function stepPackageManager(result) {
   }
   if (result.pm) return 'skip';
 
-  const { pm } = await prompts(
-    {
-      type: 'select',
-      name: 'pm',
+  const pm = guardCancel(
+    await select({
       message: 'Install dependencies with:',
-      choices: withBack(PACKAGE_MANAGERS.map((name) => ({ title: name, value: name }))),
-      initial: PACKAGE_MANAGERS.indexOf(detectPackageManager()),
-    },
-    { onCancel }
+      options: withBack(PACKAGE_MANAGERS.map((name) => ({ value: name, label: name }))),
+      initialValue: detectPackageManager(),
+    })
   );
   if (pm === BACK) return 'back';
   result.pm = pm;
@@ -520,18 +501,15 @@ async function stepInstall(result) {
     return 'skip';
   }
   if (result.install !== undefined) return 'skip';
-  const { install } = await prompts(
-    {
-      type: 'select',
-      name: 'install',
+  const install = guardCancel(
+    await select({
       message: 'Install dependencies now?',
-      choices: withBack([
-        { title: 'Yes', value: true },
-        { title: 'No', value: false },
+      options: withBack([
+        { value: true, label: 'Yes' },
+        { value: false, label: 'No' },
       ]),
-      initial: 0,
-    },
-    { onCancel }
+      initialValue: true,
+    })
   );
   if (install === BACK) return 'back';
   result.install = install;
@@ -550,6 +528,7 @@ const STEPS = [
   stepSpringPackaging,
   stepSpringJavaVersion,
   stepSpringDependencies,
+  stepSpringHotReload,
   stepQuality,
   stepDocker,
   stepPackageManager,

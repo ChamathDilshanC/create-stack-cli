@@ -125,7 +125,7 @@ export async function appendEnvVars(targetDir, vars, prodVars = vars) {
  * end up in source control.
  */
 export async function applyEnvFiles(options, warnings) {
-  const spinner = createSpinner('Generating environment files...', { indent: 2 });
+  const spinner = createSpinner('Generating environment files...');
   try {
     const { targetDir, framework, runtime } = options;
     const header = framework === 'angular' ? ANGULAR_NOTE : runtime === 'java' ? JAVA_NOTE : '';

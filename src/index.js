@@ -1,9 +1,8 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import boxen from 'boxen';
+import { confirm, intro, note, outro } from '@clack/prompts';
 import { Command } from 'commander';
 import pc from 'picocolors';
-import prompts from 'prompts';
 
 import { printBanner } from './banner.js';
 import {
@@ -24,6 +23,7 @@ import {
   CancelledError,
   emptyDir,
   formatTargetDir,
+  guardCancel,
   isDirEmpty,
   logger,
 } from './utils.js';
@@ -61,6 +61,7 @@ function parseArgs() {
     .option('--java-version <version>', 'Spring Boot only: Java version (e.g. 21, 17)')
     .option('--dependencies <list>', 'Spring Boot only: comma-separated dependency ids, searched live from start.spring.io (e.g. web,data-jpa,postgresql)')
     .option('--group-id <id>', 'Spring Boot only: Java group ID (default: com.example)')
+    .option('--no-hot-reload', 'Spring Boot only: skip DevTools / auto-restart-on-change wiring')
     .option('--no-install', 'skip automatic dependency installation')
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
     .option('--overwrite', 'overwrite the target directory if it already exists')
@@ -87,9 +88,10 @@ function parseArgs() {
     groupId: opts.groupId,
     overwrite: Boolean(opts.overwrite),
     yes: Boolean(opts.yes),
-    // Commander gives --no-install a default of `true`; only trust it when
-    // the flag was actually passed on the command line.
+    // Commander gives --no-install/--no-hot-reload a default of `true`; only
+    // trust that default when the flag was actually passed on the command line.
     install: program.getOptionValueSource('install') === 'cli' ? opts.install : undefined,
+    hotReload: program.getOptionValueSource('hotReload') === 'cli' ? opts.hotReload : undefined,
   };
 }
 
@@ -185,6 +187,7 @@ function buildPreset(cli) {
       .filter(Boolean);
   }
   if (cli.groupId) preset.groupId = cli.groupId;
+  if (cli.hotReload !== undefined) preset.springHotReload = cli.hotReload;
 
   if (cli.install !== undefined) preset.install = cli.install;
 
@@ -222,6 +225,7 @@ function assertNonInteractiveComplete(preset, cli) {
     if (preset.packaging === undefined) preset.packaging = 'jar';
     if (preset.javaVersion === undefined) preset.javaVersion = '21';
     if (preset.springDependencies === undefined) preset.springDependencies = ['web'];
+    if (preset.springHotReload === undefined) preset.springHotReload = true;
     preset.pm = preset.buildTool;
     preset.install = false;
   }
@@ -236,18 +240,11 @@ async function confirmOverwrite(targetDir, cli) {
         `Target directory "${targetDir}" is not empty. Re-run with --overwrite to proceed.`
       );
     }
-    const { overwrite } = await prompts(
-      {
-        type: 'confirm',
-        name: 'overwrite',
+    const overwrite = guardCancel(
+      await confirm({
         message: `Target directory "${path.basename(targetDir)}" is not empty. Remove existing files and continue?`,
-        initial: false,
-      },
-      {
-        onCancel: () => {
-          throw new CancelledError('Scaffold cancelled.');
-        },
-      }
+        initialValue: false,
+      })
     );
     if (!overwrite) throw new CancelledError('Scaffold cancelled.');
   }
@@ -275,7 +272,16 @@ function devCommand(options) {
     // Spring Initializr ships both mvnw/gradlew (POSIX) and mvnw.cmd/gradlew.bat
     // (Windows) in every generated project — pick whichever this OS can run.
     const isWindows = process.platform === 'win32';
-    if (options.buildTool === 'gradle') return isWindows ? 'gradlew.bat bootRun' : './gradlew bootRun';
+    if (options.buildTool === 'gradle') {
+      const gradlew = isWindows ? 'gradlew.bat' : './gradlew';
+      // --continuous is Gradle's own file-watcher: paired with DevTools (on
+      // the classpath whenever hot reload was requested), it re-triggers the
+      // build the moment a source file changes and DevTools restarts the app
+      // the moment that finishes — the actual nodemon-equivalent loop. Maven
+      // has no built-in watch mode, so plain `spring-boot:run` is the best
+      // that build tool can offer (see the warning pushed in scaffold.js).
+      return options.springHotReload ? `${gradlew} bootRun --continuous` : `${gradlew} bootRun`;
+    }
     return isWindows ? 'mvnw.cmd spring-boot:run' : './mvnw spring-boot:run';
   }
 
@@ -288,6 +294,7 @@ function devCommand(options) {
   return `${runPrefix} dev`;
 }
 
+/** Closes the clack thread `main()` opened with `intro()` — a titled note with what to do next, then a short sign-off. */
 function printSummary(options, { targetDir, cwd, installed, warnings }) {
   const relativeDir = path.relative(cwd, targetDir) || '.';
 
@@ -315,9 +322,6 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
           : 'JavaScript';
 
   const lines = [
-    // Two spaces, not one: ✔ (U+2714) renders full-width in some terminal
-    // fonts, which eats a single following space and glues the text on.
-    `${pc.green('✔')}  ${pc.bold(`${options.packageName} is ready!`)}`,
     pc.dim(targetDir),
     pc.dim(`${options.projectType} · ${options.framework} · ${languageLabel}`),
     '',
@@ -332,19 +336,20 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
     }
   }
 
-  console.log(
-    boxen(lines.join('\n'), {
-      padding: 1,
-      margin: { top: 1, bottom: 1, left: 0, right: 0 },
-      borderStyle: 'round',
-      borderColor: warnings.length > 0 ? 'yellow' : 'green',
-    })
-  );
+  note(lines.join('\n'), `${options.packageName} is ready!`);
+  outro(warnings.length > 0 ? pc.yellow('Done — a few things above need your attention.') : pc.green('Done. Happy building!'));
 }
 
 async function main() {
   const cli = parseArgs();
-  if (!cli.yes) printBanner(pkg);
+  if (!cli.yes) {
+    printBanner(pkg);
+    // Opens the clack thread every question, spinner, and the closing note()/
+    // outro() below all render into — one continuous connected flow from the
+    // first question to the last file written, instead of separate,
+    // differently-styled UI libraries stitched together.
+    intro(pc.bgCyan(pc.black(' create-stack ')));
+  }
 
   const preset = buildPreset(cli);
   assertNonInteractiveComplete(preset, cli);

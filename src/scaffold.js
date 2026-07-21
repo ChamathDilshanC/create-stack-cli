@@ -8,7 +8,7 @@ import { appendEnvVars, applyEnvFiles } from './env.js';
 import { applyQuality } from './quality.js';
 import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
 import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
-import { scaffoldSpringProject } from './spring.js';
+import { generateSpringStructure, scaffoldSpringProject } from './spring.js';
 import { generateEnterpriseStructure, modelsDirFor } from './structure.js';
 import { applyStyling } from './styling.js';
 import { commandOutputTail, createSpinner, logger, spinnerFail, spinnerSucceed } from './utils.js';
@@ -531,7 +531,7 @@ async function handleDjangoBackend(options, warnings) {
   const projectName = toPythonIdentifier(options.packageName);
   if (venvReady && options.install) {
     const djangoAdmin = venvBinPath(targetDir, 'django-admin');
-    const spinner = createSpinner('Scaffolding Django project with django-admin...', { indent: 2 });
+    const spinner = createSpinner('Scaffolding Django project with django-admin...');
     try {
       await execa(djangoAdmin, ['startproject', projectName, '.'], { cwd: targetDir, stdin: 'ignore' });
       spinnerSucceed(spinner, 'Django project scaffolded (django-admin startproject).');
@@ -705,13 +705,28 @@ async function applyPythonQuality(options, warnings, venvReady) {
  * Spring Initializr generates a real Maven/Gradle project, package structure
  * (src/main/java/..., src/main/resources) and all — so unlike every other
  * backend above, there's no generateEnterpriseStructure or applyDatabase
- * call here: the enterprise layout is JS-shaped and would not fit Java
- * package conventions, and the dependency picker in prompts.js already
+ * call here: the generic enterprise layout is JS-shaped and would not fit
+ * Java package conventions, and the dependency picker in prompts.js already
  * covers the database/ORM question (Spring Data JPA, drivers, ...) through
- * Spring's own catalog instead of this CLI's Node-oriented one.
+ * Spring's own catalog instead of this CLI's Node-oriented one. A
+ * Java-shaped equivalent (controller/service/repository/model/...) is laid
+ * down by generateSpringStructure instead, right below.
  */
 async function handleSpringBackend(options, warnings) {
-  await scaffoldSpringProject(options);
+  const { javaPackage } = await scaffoldSpringProject(options);
+  await generateSpringStructure(options, warnings, javaPackage);
+
+  // spring-boot-devtools restarts the app on its own once it sees recompiled
+  // classes, but neither build tool recompiles on save by itself — Gradle's
+  // --continuous flag (wired into index.js's devCommand) closes that gap for
+  // free, but Maven has no built-in watch mode, so DevTools alone won't
+  // actually auto-reload without an IDE (or a manual `mvnw compile`) doing
+  // the recompiling.
+  if (options.springHotReload && options.buildTool === 'maven') {
+    warnings.push(
+      'Hot reload was enabled (DevTools is on the classpath), but Maven has no built-in watch mode — DevTools only restarts once something recompiles the changed classes. Your IDE\'s "build automatically" does this, or run "./mvnw compile" manually after each change. For fully automatic hot reload from the command line, use --build-tool gradle instead.'
+    );
+  }
 
   if (options.docker) {
     await applyDocker(options, warnings, {

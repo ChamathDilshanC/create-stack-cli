@@ -53,6 +53,7 @@ Most scaffolders fall into one of two camps: a single-framework tool that does o
 - **Enterprise folder structure** — a `.gitkeep`-tracked, feature-sliced layout, applied consistently across every project type (including Fullstack), placed in each framework's own real source directory — `src/`, Nuxt's `app/`, a Django project's settings package — never somewhere that fights the framework's own routing conventions.
 - **`.env` / `.env.local` / `.env.production`** generated for every project, with each framework's own client-exposed variable prefix (`VITE_`, `NEXT_PUBLIC_`, `PUBLIC_`, `NUXT_PUBLIC_`, `EXPO_PUBLIC_`) applied automatically, and `.env.local` gitignored by default.
 - **Auto-installs dependencies** with your package manager of choice — npm, yarn, pnpm, bun — or pip inside a fresh venv for Python.
+- **One connected terminal UI, start to finish** — built on [`@clack/prompts`](https://github.com/bombshell-dev/clack) (the same engine behind `create-astro`, `sv create`, and shadcn/ui's CLI), so every question, spinner, and the closing summary render as a single continuous thread instead of a patchwork of differently-styled prompts.
 - **Non-interactive mode** via CLI flags, for scripting and CI.
 - **Never leaves you stranded** — a failed network install, an existing non-empty directory, Ctrl+C mid-prompt: every one of these ends in a clear message and a project you can still finish setting up by hand, not a stack trace.
 
@@ -118,6 +119,7 @@ Install dependencies now? Yes
 | Styling | Frontend, Fullstack, Desktop | Tailwind CSS (v4), UnoCSS, CSS Modules, None |
 | Database / ORM | Backend, Fullstack (not Spring Boot) | **Node:** Prisma, Drizzle ORM, Mongoose, None · **Python:** SQLAlchemy, None (Django always uses its own ORM) |
 | Build tool, packaging, Java version, dependencies | Spring Boot only | Maven/Gradle · Jar/War · whichever Java versions start.spring.io currently offers · its full dependency catalog, searched live (see below) |
+| Hot reload | Spring Boot only | Yes (default) / No — wires in `spring-boot-devtools`; see below |
 | Code quality | always | **Node:** ESLint + Prettier, Biome, None · **Python:** Ruff, Black + Flake8, None — not yet automated for Spring Boot |
 | Docker | always | Yes / No |
 | Package manager | Node frameworks only | npm, yarn, pnpm, bun — Python always uses pip in a fresh `.venv`, Spring Boot always uses its own Maven/Gradle wrapper |
@@ -128,6 +130,15 @@ Angular and NestJS force TypeScript; Django, Flask, and FastAPI force Python; Sp
 ### Spring Boot's dependency picker
 
 Unlike every other choice in the decision tree, Spring Boot's dependency list isn't defined anywhere in this repository — it's fetched from `start.spring.io/metadata/client` at the moment you answer the question, the same live catalog start.spring.io's own web UI reads from. Type to search across the whole thing (name or description), space to toggle a match, enter to confirm. If start.spring.io can't be reached, a short built-in fallback list (Web, Data JPA, H2, PostgreSQL/MySQL drivers, Validation, Lombok, DevTools, Security, Actuator) is used instead, with a warning in the final summary telling you to re-run once you're back online for the full catalog. The generated project itself — `pom.xml`/`build.gradle`, the Maven/Gradle wrapper, `src/main/java/...` — comes straight from start.spring.io's `starter.zip` endpoint, so it's exactly what start.spring.io would hand you directly.
+
+On top of that bare project, `src/spring.js` lays down the same kind of layered package skeleton every other backend in this CLI gets, Java-shaped: `controller/`, `service/`, `dto/`, and `exception/` (seeded with a real, working `GET /api/hello` endpoint through all four layers — only when `web`/`webflux` is among your chosen dependencies, since `@RestController` needs Spring MVC on the classpath to mean anything), `model/` and `repository/` (seeded with a demo JPA `User` entity + `JpaRepository` — only when `data-jpa` is selected), and `config/` as an empty package ready for what you add next.
+
+### Spring Boot's hot reload (the nodemon equivalent)
+
+Answering "Yes" here (the default) adds `spring-boot-devtools` to the project, which restarts the app on its own the instant it sees recompiled classes. That's half of nodemon's job — the other half, actually noticing a saved file and recompiling it, isn't something either build tool does by default from the command line:
+
+- **Gradle** has a built-in answer: `--continuous`, which is exactly why the "Next steps" dev command becomes `./gradlew bootRun --continuous` instead of the plain `bootRun` — Gradle watches your source files itself and re-triggers the build, DevTools does the rest. Nothing extra to install.
+- **Maven** has no built-in watch mode, so `./mvnw spring-boot:run` alone won't auto-reload on save from a bare terminal — DevTools is still on the classpath and will restart the app the moment *something* recompiles the changed classes, which normally means your IDE's "build automatically" setting, or running `./mvnw compile` by hand after each change. The CLI flags this in the final summary whenever you pick Maven with hot reload on, and points at `--build-tool gradle` for the fully automatic version.
 
 ## Frameworks by project type
 
@@ -172,6 +183,7 @@ npx @chamathdilshanc/create-stack my-api \
 | `--java-version <version>` | Spring Boot only: e.g. `21` (default), `17` |
 | `--dependencies <list>` | Spring Boot only: comma-separated dependency ids, searched live from start.spring.io (e.g. `web,data-jpa,postgresql`) — defaults to `web` |
 | `--group-id <id>` | Spring Boot only: Java group ID (default: `com.example`) |
+| `--no-hot-reload` | Spring Boot only: skip `spring-boot-devtools` / auto-restart wiring (on by default) |
 | `--no-install` | Skip automatic dependency installation |
 | `-y, --yes` | Skip prompts; fails if a required option isn't supplied via flags |
 | `--overwrite` | Overwrite the target directory if it already exists, without prompting |
@@ -242,7 +254,7 @@ Every scaffold, regardless of type, ends up with:
   \* omitted for Next.js specifically — its App Router owns that name at the project root already.
   \*\* becomes `schema/` automatically when Drizzle is the chosen ORM.
 
-  Spring Boot is the one exception to this layout: start.spring.io's own generated project already has a real Maven/Gradle package structure (`src/main/java/...`), so this feature-sliced layout — and the generic Node-oriented database step — are skipped for it entirely rather than fighting Java's own conventions.
+  Spring Boot gets its own Java-shaped equivalent instead of this exact layout: `controller/`, `service/`, `dto/`, `repository/`, `model/`, `config/`, `exception/` as real packages under `src/main/java/...` — see [Spring Boot's dependency picker](#spring-boots-dependency-picker) above for what gets seeded with working code versus left as an empty package. The generic Node-oriented database step is skipped either way; Spring's own dependency catalog covers that instead.
 
 - **Three environment files** — `.env` (safe defaults, meant to be committed), `.env.local` (empty, always gitignored, yours to fill in with real secrets), and `.env.production` (production-shaped placeholders) — each with the right variables for what you picked: `PORT`/`NODE_ENV` for a Node server, `PORT`/`ENVIRONMENT` for Python, `SERVER_PORT`/`SPRING_PROFILES_ACTIVE` for Spring Boot, `${PREFIX}API_URL`/`${PREFIX}APP_NAME` for anything with a UI, where `${PREFIX}` is whatever that framework's bundler actually requires (`VITE_`, `NEXT_PUBLIC_`, and so on) to expose it to client code at all.
 - **A "Next steps" summary** tailored to what you built — the right install command if you skipped it, the right dev command (`npm run dev`, `ng serve`, `python manage.py runserver`, `uvicorn app.main:app --reload`, `./mvnw spring-boot:run`, `npm run tauri dev`, `npx expo start`...), and a plain-English explanation of anything that couldn't be fully automated (an offline install, a framework that already ships its own linter, a tool that always makes a network call regardless of `--no-install`).
@@ -283,8 +295,8 @@ create-stack-cli/
 │   ├── structure.js            # Enterprise folder generation
 │   ├── env.js                   # .env / .env.local / .env.production generation
 │   ├── starters.js             # Styled starter components written during styling setup
-│   ├── install.js               # Node dependency installation (execa + ora spinner)
-│   └── utils.js                 # Logger, validators, package-manager detection
+│   ├── install.js               # Node dependency installation (execa + clack spinner)
+│   └── utils.js                 # Logger, validators, package-manager detection, clack spinner/cancel helpers
 ├── .github/workflows/ci.yml    # Matrix-tested scaffold + build + lint, then semantic-release
 ├── package.json
 └── README.md

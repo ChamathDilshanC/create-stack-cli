@@ -48,23 +48,23 @@ export async function fetchSpringMetadata() {
   return cachedMetadata;
 }
 
-/** Flattens metadata's grouped dependency catalog into `{ title, value, description }` choices for a searchable multiselect — title is the searchable name, description carries the category + blurb shown under the highlighted entry. */
+/** Flattens metadata's grouped dependency catalog into clack's `{ value, label, hint }` option shape for a searchable multiselect — label is the searchable name, hint carries the category + blurb shown under the highlighted entry. */
 export function dependencyChoicesFromMetadata(metadata) {
   const groups = metadata?.dependencies?.values ?? [];
   return groups.flatMap((group) =>
     group.values.map((dep) => ({
-      title: dep.name,
       value: dep.id,
-      description: `${group.name}${dep.description ? ` — ${dep.description}` : ''}`,
+      label: dep.name,
+      hint: `${group.name}${dep.description ? ` — ${dep.description}` : ''}`,
     }))
   );
 }
 
 function fallbackChoices() {
   return FALLBACK_DEPENDENCIES.map((dep) => ({
-    title: dep.name,
     value: dep.id,
-    description: `${dep.group} — ${dep.description}`,
+    label: dep.name,
+    hint: `${dep.group} — ${dep.description}`,
   }));
 }
 
@@ -134,8 +134,13 @@ function toJavaPackageSegment(name) {
  * unwrapped afterward.
  */
 export async function scaffoldSpringProject(options) {
-  const { targetDir, packageName, buildTool, packaging, javaVersion, springDependencies: dependencies = [] } = options;
+  const { targetDir, packageName, buildTool, packaging, javaVersion, springDependencies = [] } = options;
   await fs.ensureDir(targetDir);
+
+  // 'devtools' enables Spring Boot's own auto-restart-on-recompile — folded
+  // in here (deduped via Set) rather than left for the user to have to find
+  // and add themselves in the dependency search.
+  const dependencies = [...new Set(options.springHotReload ? [...springDependencies, 'devtools'] : springDependencies)];
 
   // Resolved here rather than trusted from options: --yes/non-interactive
   // runs never go through stepSpringJavaVersion (the only place that would
@@ -163,7 +168,7 @@ export async function scaffoldSpringProject(options) {
     dependencies: dependencies.join(','),
   });
 
-  const spinner = createSpinner('Generating Spring Boot project (start.spring.io)...', { indent: 2 });
+  const spinner = createSpinner('Generating Spring Boot project (start.spring.io)...');
   try {
     const res = await fetch(`${INITIALIZR_BASE}/starter.zip?${params.toString()}`);
     if (!res.ok) {
@@ -197,4 +202,191 @@ export async function scaffoldSpringProject(options) {
   }
 
   return { artifactId, groupId, javaPackage };
+}
+
+/* ------------------------------------------------------------------ */
+/* Layered package structure (controller/service/repository/...)      */
+/* ------------------------------------------------------------------ */
+
+const WEB_DEPENDENCY_IDS = ['web', 'webflux'];
+const DATA_ACCESS_DEPENDENCY_IDS = ['data-jpa', 'data-mongodb', 'data-jdbc', 'data-r2dbc'];
+
+const dtoJava = (pkg) => `package ${pkg}.dto;
+
+public class HelloResponse {
+
+    private final String message;
+
+    public HelloResponse(String message) {
+        this.message = message;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+}
+`;
+
+const serviceJava = (pkg) => `package ${pkg}.service;
+
+import org.springframework.stereotype.Service;
+
+@Service
+public class HelloService {
+
+    public String getGreeting() {
+        return "Hello from Spring Boot!";
+    }
+}
+`;
+
+const controllerJava = (pkg) => `package ${pkg}.controller;
+
+import ${pkg}.dto.HelloResponse;
+import ${pkg}.service.HelloService;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/hello")
+public class HelloController {
+
+    private final HelloService helloService;
+
+    public HelloController(HelloService helloService) {
+        this.helloService = helloService;
+    }
+
+    @GetMapping
+    public HelloResponse hello() {
+        return new HelloResponse(helloService.getGreeting());
+    }
+}
+`;
+
+const exceptionHandlerJava = (pkg) => `package ${pkg}.exception;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.Map;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, String>> handleException(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .body(Map.of("error", ex.getMessage() != null ? ex.getMessage() : "Unexpected error"));
+    }
+}
+`;
+
+const modelJava = (pkg) => `package ${pkg}.model;
+
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+
+@Entity
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+
+    private String email;
+
+    public Long getId() {
+        return id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+}
+`;
+
+const repositoryJava = (pkg) => `package ${pkg}.repository;
+
+import ${pkg}.model.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface UserRepository extends JpaRepository<User, Long> {
+}
+`;
+
+/**
+ * Spring Initializr's own generated project is just the bare application
+ * class — no layering at all. This adds the same kind of enterprise package
+ * skeleton every other backend in this CLI gets (controller/service/model/...,
+ * via structure.js's generateEnterpriseStructure), but Java-shaped: real
+ * packages under the project's actual base package, seeded with working code
+ * where it's safe to assume something (a REST layer needs `web` on the
+ * classpath; a JPA entity/repository needs `data-jpa`), and an empty
+ * `.gitkeep`-tracked package everywhere else — exactly the same "skeleton for
+ * what you haven't built yet" idea structure.js already applies elsewhere.
+ */
+export async function generateSpringStructure(options, warnings, javaPackage) {
+  const { targetDir, springDependencies = [] } = options;
+  const hasWeb = WEB_DEPENDENCY_IDS.some((id) => springDependencies.includes(id));
+  const hasJpa = springDependencies.includes('data-jpa');
+  const hasDataAccess = DATA_ACCESS_DEPENDENCY_IDS.some((id) => springDependencies.includes(id));
+
+  const spinner = createSpinner('Generating layered package structure...');
+  try {
+    const baseDir = path.join(targetDir, 'src', 'main', 'java', ...javaPackage.split('.'));
+
+    const write = async (relPackage, fileName, content) => {
+      await fs.outputFile(path.join(baseDir, relPackage, fileName), content);
+    };
+    const empty = async (relPackage) => {
+      await fs.outputFile(path.join(baseDir, relPackage, '.gitkeep'), '');
+    };
+
+    if (hasWeb) {
+      await write('dto', 'HelloResponse.java', dtoJava(javaPackage));
+      await write('service', 'HelloService.java', serviceJava(javaPackage));
+      await write('controller', 'HelloController.java', controllerJava(javaPackage));
+      await write('exception', 'GlobalExceptionHandler.java', exceptionHandlerJava(javaPackage));
+    } else {
+      await empty('dto');
+      await empty('service');
+      await empty('controller');
+      await empty('exception');
+    }
+
+    if (hasJpa) {
+      await write('model', 'User.java', modelJava(javaPackage));
+      await write('repository', 'UserRepository.java', repositoryJava(javaPackage));
+    } else if (hasDataAccess) {
+      await empty('model');
+      await empty('repository');
+    }
+
+    await empty('config');
+
+    spinnerSucceed(spinner, 'Layered package structure generated (controller/service/repository/model/dto/config/exception).');
+  } catch (err) {
+    spinnerFail(spinner, 'Layered package structure could not be fully generated.');
+    warnings.push(`Some Spring Boot packages may be missing — ${err.message}. You can create them manually if needed.`);
+  }
 }

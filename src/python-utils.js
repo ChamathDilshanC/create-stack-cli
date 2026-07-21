@@ -41,7 +41,7 @@ export function venvBinPath(targetDir, executable) {
 
 /** Creates a .venv inside targetDir using the system Python. Returns false (and warns) if Python isn't available or venv creation fails. */
 export async function createVenv(targetDir, warnings) {
-  const spinner = createSpinner('Creating Python virtual environment...', { indent: 2 });
+  const spinner = createSpinner('Creating Python virtual environment...');
   try {
     const pythonCmd = await findPythonCommand();
     await execa(pythonCmd, ['-m', 'venv', '.venv'], { cwd: targetDir, stdin: 'ignore' });
@@ -69,7 +69,7 @@ export async function pipInstallOrRecord({ options, warnings, packages, label, v
 
   if (install && venvReady) {
     const pip = venvBinPath(targetDir, 'pip');
-    const spinner = createSpinner(`Installing ${label}...`, { indent: 2 });
+    const spinner = createSpinner(`Installing ${label}...`);
     try {
       await execa(pip, ['install', ...packages], { cwd: targetDir, stdin: 'ignore' });
       spinnerSucceed(spinner, `${label} installed.`);

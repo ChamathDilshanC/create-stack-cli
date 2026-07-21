@@ -87,7 +87,7 @@ const composeTemplate = (serviceName, hostPort, containerPort) => `services:
  * is only the host-side port it gets published on.
  */
 export async function applyDocker(options, warnings, { flavor, buildCommand, startCommand, port, buildTool, javaVersion }) {
-  const spinner = createSpinner('Generating Docker files...', { indent: 2 });
+  const spinner = createSpinner('Generating Docker files...');
   try {
     const containerPort = flavor === 'static' ? 80 : port;
     const dockerfile =
