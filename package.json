@@ -49,6 +49,8 @@
     "express",
     "fastify",
     "hono",
+    "spring-boot",
+    "java",
     "electron",
     "tauri",
     "expo",
@@ -60,6 +62,7 @@
     "monorepo-tooling"
   ],
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "boxen": "^8.0.1",
     "commander": "^12.1.0",
     "execa": "^9.4.1",

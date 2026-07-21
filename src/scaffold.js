@@ -1,7 +1,6 @@
 import path from 'node:path';
 import fs from 'fs-extra';
 import { execa } from 'execa';
-import ora from 'ora';
 
 import { applyDatabase } from './database.js';
 import { applyDocker } from './docker.js';
@@ -9,9 +8,10 @@ import { appendEnvVars, applyEnvFiles } from './env.js';
 import { applyQuality } from './quality.js';
 import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
 import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
+import { scaffoldSpringProject } from './spring.js';
 import { generateEnterpriseStructure, modelsDirFor } from './structure.js';
 import { applyStyling } from './styling.js';
-import { commandOutputTail, logger, spinnerFail, spinnerSucceed } from './utils.js';
+import { commandOutputTail, createSpinner, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
 /* ------------------------------------------------------------------ */
 /* Frontend                                                            */
@@ -423,6 +423,7 @@ async function handleBackend(options, warnings) {
   if (framework === 'django') return handleDjangoBackend(options, warnings);
   if (framework === 'flask') return handleManualPythonBackend(options, warnings, 'flask');
   if (framework === 'fastapi') return handleManualPythonBackend(options, warnings, 'fastapi');
+  if (framework === 'spring') return handleSpringBackend(options, warnings);
 
   throw new Error(`Unknown backend framework: ${framework}`);
 }
@@ -530,7 +531,7 @@ async function handleDjangoBackend(options, warnings) {
   const projectName = toPythonIdentifier(options.packageName);
   if (venvReady && options.install) {
     const djangoAdmin = venvBinPath(targetDir, 'django-admin');
-    const spinner = ora({ text: 'Scaffolding Django project with django-admin...', indent: 2 }).start();
+    const spinner = createSpinner('Scaffolding Django project with django-admin...', { indent: 2 });
     try {
       await execa(djangoAdmin, ['startproject', projectName, '.'], { cwd: targetDir, stdin: 'ignore' });
       spinnerSucceed(spinner, 'Django project scaffolded (django-admin startproject).');
@@ -693,6 +694,32 @@ async function applyPythonQuality(options, warnings, venvReady) {
       '[flake8]\nmax-line-length = 100\nextend-ignore = E203\nexclude = .venv,__pycache__,.git\n'
     );
     await fs.writeFile(path.join(targetDir, 'pyproject.toml'), '[tool.black]\nline-length = 100\n');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Backend — Java (Spring Boot)                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Spring Initializr generates a real Maven/Gradle project, package structure
+ * (src/main/java/..., src/main/resources) and all — so unlike every other
+ * backend above, there's no generateEnterpriseStructure or applyDatabase
+ * call here: the enterprise layout is JS-shaped and would not fit Java
+ * package conventions, and the dependency picker in prompts.js already
+ * covers the database/ORM question (Spring Data JPA, drivers, ...) through
+ * Spring's own catalog instead of this CLI's Node-oriented one.
+ */
+async function handleSpringBackend(options, warnings) {
+  await scaffoldSpringProject(options);
+
+  if (options.docker) {
+    await applyDocker(options, warnings, {
+      flavor: 'java',
+      buildTool: options.buildTool,
+      javaVersion: options.javaVersion,
+      port: 8080,
+    });
   }
 }
 
@@ -867,7 +894,10 @@ const HANDLERS = {
  * selected extras on top. Returns non-fatal `warnings` for the final summary.
  */
 export async function scaffoldProject(options) {
-  const warnings = [];
+  // Carries over anything noted during the wizard itself (e.g. Spring's live
+  // dependency catalog falling back to its offline default) into the same
+  // final summary as everything scaffolding produces.
+  const warnings = [...(options.promptWarnings ?? [])];
   const handler = HANDLERS[options.projectType];
   if (!handler) throw new Error(`Unknown project type: ${options.projectType}`);
 

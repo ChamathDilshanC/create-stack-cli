@@ -1,9 +1,8 @@
 import path from 'node:path';
 import fs from 'fs-extra';
 import { execa } from 'execa';
-import ora from 'ora';
 
-import { commandOutputTail, logger, spinnerFail, spinnerSucceed } from './utils.js';
+import { commandOutputTail, createSpinner, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
 /**
  * Windows only reliably has a bare `python` on PATH — its `python3` is
@@ -42,7 +41,7 @@ export function venvBinPath(targetDir, executable) {
 
 /** Creates a .venv inside targetDir using the system Python. Returns false (and warns) if Python isn't available or venv creation fails. */
 export async function createVenv(targetDir, warnings) {
-  const spinner = ora({ text: 'Creating Python virtual environment...', indent: 2 }).start();
+  const spinner = createSpinner('Creating Python virtual environment...', { indent: 2 });
   try {
     const pythonCmd = await findPythonCommand();
     await execa(pythonCmd, ['-m', 'venv', '.venv'], { cwd: targetDir, stdin: 'ignore' });
@@ -70,7 +69,7 @@ export async function pipInstallOrRecord({ options, warnings, packages, label, v
 
   if (install && venvReady) {
     const pip = venvBinPath(targetDir, 'pip');
-    const spinner = ora({ text: `Installing ${label}...`, indent: 2 }).start();
+    const spinner = createSpinner(`Installing ${label}...`, { indent: 2 });
     try {
       await execa(pip, ['install', ...packages], { cwd: targetDir, stdin: 'ignore' });
       spinnerSucceed(spinner, `${label} installed.`);
@@ -102,7 +101,7 @@ export async function installPythonDependencies(targetDir, warnings) {
   }
 
   const pip = venvBinPath(targetDir, 'pip');
-  const spinner = ora('Installing Python dependencies...').start();
+  const spinner = createSpinner('Installing Python dependencies...');
   try {
     await execa(pip, ['install', '-r', 'requirements.txt'], { cwd: targetDir, stdin: 'ignore' });
     spinnerSucceed(spinner, 'Python dependencies installed.');

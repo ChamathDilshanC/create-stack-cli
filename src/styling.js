@@ -1,6 +1,5 @@
 import path from 'node:path';
 import fs from 'fs-extra';
-import ora from 'ora';
 
 import {
   ANGULAR_POSTCSS_CONFIG,
@@ -9,7 +8,7 @@ import {
   VITE_CONFIG_WITH_TAILWIND,
 } from './starters.js';
 import { installOrRecord } from './scaffold-utils.js';
-import { spinnerFail, spinnerSucceed } from './utils.js';
+import { createSpinner, spinnerFail, spinnerSucceed } from './utils.js';
 
 /**
  * Global CSS entry that receives the framework's stylesheet import, for
@@ -252,7 +251,7 @@ export async function setupTailwind(options, warnings) {
     label: 'Tailwind CSS',
   });
 
-  const spinner = ora({ text: 'Configuring Tailwind CSS...', indent: 2 }).start();
+  const spinner = createSpinner('Configuring Tailwind CSS...', { indent: 2 });
   try {
     if (isAngular) {
       await fs.writeFile(path.join(targetDir, '.postcssrc.json'), ANGULAR_POSTCSS_CONFIG);
@@ -371,7 +370,7 @@ export async function setupUnoCss(options, warnings) {
     label: 'UnoCSS',
   });
 
-  const spinner = ora({ text: 'Configuring UnoCSS...', indent: 2 }).start();
+  const spinner = createSpinner('Configuring UnoCSS...', { indent: 2 });
   try {
     const configExt = language === 'ts' ? 'ts' : 'js';
     await fs.writeFile(path.join(targetDir, `uno.config.${configExt}`), UNO_CONFIG);

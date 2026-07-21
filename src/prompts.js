@@ -1,6 +1,7 @@
 import path from 'node:path';
 import prompts from 'prompts';
 import pc from 'picocolors';
+import { getSpringChoices } from './spring.js';
 import {
   CancelledError,
   detectPackageManager,
@@ -66,6 +67,20 @@ export const FRAMEWORKS = {
       scaffolder: 'fastapi',
       runtime: 'python',
       forceLanguage: 'python',
+    },
+    // Java's own ecosystem, mirroring the Python frameworks above: no ts/js
+    // split, no npm-family package manager, its own build tool instead
+    // (Maven/Gradle). Database/ORM is never asked either — Spring's own
+    // dependency catalog (fetched live below) already covers Spring Data
+    // JPA, drivers, etc., so a separate ORM question would just be a second,
+    // conflicting way to answer the same question.
+    {
+      value: 'spring',
+      title: 'Spring Boot (Java)',
+      scaffolder: 'spring',
+      runtime: 'java',
+      forceLanguage: 'java',
+      forceDatabase: 'spring-initializr',
     },
   ],
   desktop: [
@@ -321,12 +336,121 @@ async function stepDatabase(result) {
   return 'ok';
 }
 
+const isSpring = (result) => result.framework === 'spring';
+
+/** Spring Boot only — every other framework skips these three straight through. */
+async function stepSpringBuildTool(result) {
+  if (!isSpring(result)) return 'skip';
+  if (result.buildTool) return 'skip';
+
+  const { buildTool } = await prompts(
+    {
+      type: 'select',
+      name: 'buildTool',
+      message: 'Build tool:',
+      choices: withBack([
+        { title: 'Maven', value: 'maven' },
+        { title: 'Gradle', value: 'gradle' },
+      ]),
+    },
+    { onCancel }
+  );
+  if (buildTool === BACK) return 'back';
+  result.buildTool = buildTool;
+  return 'ok';
+}
+
+async function stepSpringPackaging(result) {
+  if (!isSpring(result)) return 'skip';
+  if (result.packaging) return 'skip';
+
+  const { packaging } = await prompts(
+    {
+      type: 'select',
+      name: 'packaging',
+      message: 'Packaging:',
+      choices: withBack([
+        { title: 'Jar', value: 'jar' },
+        { title: 'War', value: 'war' },
+      ]),
+      initial: 0,
+    },
+    { onCancel }
+  );
+  if (packaging === BACK) return 'back';
+  result.packaging = packaging;
+  return 'ok';
+}
+
+/**
+ * Fetches Spring Initializr's live metadata once (cached in spring.js at the
+ * process level), pulls this run's current Java version choices from it, and
+ * stashes the dependency catalog on `result` for stepSpringDependencies right
+ * after — one network round trip for both steps instead of two. (The Boot
+ * version itself is resolved separately, fresh, at actual generation time —
+ * see spring.js's resolveBootVersion.)
+ */
+async function stepSpringJavaVersion(result) {
+  if (!isSpring(result)) return 'skip';
+  if (result.javaVersion) return 'skip';
+
+  if (!result.promptWarnings) result.promptWarnings = [];
+  const catalog = await getSpringChoices(result.promptWarnings);
+  result._springDependencyChoices = catalog.dependencies;
+
+  const { javaVersion } = await prompts(
+    {
+      type: 'select',
+      name: 'javaVersion',
+      message: 'Java version:',
+      choices: withBack(catalog.javaVersions.map((v) => ({ title: v, value: v }))),
+      initial: 0,
+    },
+    { onCancel }
+  );
+  if (javaVersion === BACK) return 'back';
+  result.javaVersion = javaVersion;
+  return 'ok';
+}
+
+/**
+ * Spring's own dependency catalog — fetched live from start.spring.io, never
+ * bundled in this package (it's added to dozens of times a year). Search-as-
+ * you-type over the full live catalog, exactly like start.spring.io's own
+ * web UI. No "← Back" choice here: a multiselect's choices are the answer
+ * itself, so there's no single sentinel value to react to the way every
+ * select-type step above does — Ctrl+C and re-running is the way out.
+ */
+async function stepSpringDependencies(result) {
+  if (!isSpring(result)) return 'skip';
+  if (result.springDependencies) return 'skip';
+
+  const { dependencies } = await prompts(
+    {
+      type: 'autocompleteMultiselect',
+      name: 'dependencies',
+      message: 'Dependencies (type to search, space to toggle, enter to confirm):',
+      choices: result._springDependencyChoices,
+      instructions: false,
+    },
+    { onCancel }
+  );
+  delete result._springDependencyChoices;
+  result.springDependencies = dependencies ?? [];
+  return 'ok';
+}
+
 /**
  * A single select, not two checkboxes: ESLint and Biome (or Ruff and
  * Black+Flake8, for Python) are mutually exclusive tools, so a radio choice
- * makes that impossible to violate instead of just discouraged.
+ * makes that impossible to violate instead of just discouraged. Java has no
+ * equivalent wired up yet — Spring Initializr projects skip this entirely.
  */
 async function stepQuality(result) {
+  if (result.runtime === 'java') {
+    result.quality = 'none';
+    return 'skip';
+  }
   if (result.quality) return 'skip';
   const { quality } = await prompts(
     {
@@ -362,10 +486,14 @@ async function stepDocker(result) {
   return 'ok';
 }
 
-/** Python has no npm-family equivalent; pip inside a venv is used unconditionally, so there's nothing to ask. */
+/** Python has no npm-family equivalent (pip in a venv, unconditionally); Java uses whichever build tool was already chosen above — neither has anything left to ask here. */
 async function stepPackageManager(result) {
   if (result.runtime === 'python') {
     result.pm = 'pip';
+    return 'skip';
+  }
+  if (result.runtime === 'java') {
+    result.pm = result.buildTool;
     return 'skip';
   }
   if (result.pm) return 'skip';
@@ -385,7 +513,12 @@ async function stepPackageManager(result) {
   return 'ok';
 }
 
+/** Maven/Gradle's own wrapper resolves dependencies itself on first build — there's no separate "install" step to offer for Java. */
 async function stepInstall(result) {
+  if (result.runtime === 'java') {
+    result.install = false;
+    return 'skip';
+  }
   if (result.install !== undefined) return 'skip';
   const { install } = await prompts(
     {
@@ -413,6 +546,10 @@ const STEPS = [
   stepLanguage,
   stepStyling,
   stepDatabase,
+  stepSpringBuildTool,
+  stepSpringPackaging,
+  stepSpringJavaVersion,
+  stepSpringDependencies,
   stepQuality,
   stepDocker,
   stepPackageManager,

@@ -1,9 +1,8 @@
 import path from 'node:path';
 import fs from 'fs-extra';
 import { execa } from 'execa';
-import ora from 'ora';
 
-import { commandOutputTail, logger, spinnerFail, spinnerSucceed } from './utils.js';
+import { commandOutputTail, createSpinner, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
 /** `<pm> <args> <packages>` prefix that adds dev dependencies, per manager. */
 export const ADD_DEV_ARGS = {
@@ -32,7 +31,7 @@ export const formatCommand = (command, args) => [command, ...args].join(' ');
  */
 export async function runScaffolder({ label, success, command, args, cwd, expectFile }) {
   logger.dim(`  › ${formatCommand(command, args)}`);
-  const spinner = ora({ text: label, indent: 2 }).start();
+  const spinner = createSpinner(label, { indent: 2 });
   let result;
   try {
     result = await execa(command, args, { cwd, stdin: 'ignore' });
@@ -61,7 +60,7 @@ export async function runScaffolder({ label, success, command, args, cwd, expect
 /** Runs an optional step behind a spinner; reports failure instead of throwing. */
 export async function tryRun({ label, success, failure, command, args, cwd }) {
   logger.dim(`  › ${formatCommand(command, args)}`);
-  const spinner = ora({ text: label, indent: 2 }).start();
+  const spinner = createSpinner(label, { indent: 2 });
   try {
     await execa(command, args, { cwd, stdin: 'ignore' });
     spinnerSucceed(spinner, success);

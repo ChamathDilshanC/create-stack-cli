@@ -1,8 +1,7 @@
 import path from 'node:path';
 import fs from 'fs-extra';
-import ora from 'ora';
 
-import { spinnerFail, spinnerSucceed } from './utils.js';
+import { createSpinner, spinnerFail, spinnerSucceed } from './utils.js';
 
 /** Frontend / Mobile / Desktop layout — generated under `<baseDir>/`. */
 export const FRONTEND_DIRECTORIES = [
@@ -45,7 +44,7 @@ export function modelsDirFor(options, baseDir = 'src') {
  * warning rather than unwinding a scaffold that has otherwise succeeded.
  */
 export async function generateEnterpriseStructure(options, warnings, { baseDir = 'src', exclude = [] } = {}) {
-  const spinner = ora({ text: 'Generating enterprise folder structure...', indent: 2 }).start();
+  const spinner = createSpinner('Generating enterprise folder structure...', { indent: 2 });
   const rootDir = path.join(options.targetDir, baseDir);
   const allDirectories =
     options.projectType === 'backend' ? backendDirectories(options.database) : FRONTEND_DIRECTORIES;

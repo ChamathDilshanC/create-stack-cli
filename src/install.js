@@ -1,8 +1,7 @@
 import { execa } from 'execa';
-import ora from 'ora';
 import pc from 'picocolors';
 
-import { commandOutputTail, logger, spinnerFail, spinnerSucceed } from './utils.js';
+import { commandOutputTail, createSpinner, logger, spinnerFail, spinnerSucceed } from './utils.js';
 
 const SUPPORTED = new Set(['npm', 'yarn', 'pnpm', 'bun']);
 
@@ -19,7 +18,7 @@ export async function installDependencies(targetDir, pm) {
     throw new Error(`Unsupported package manager: ${pm}`);
   }
 
-  const spinner = ora(`Installing dependencies with ${pm}...`).start();
+  const spinner = createSpinner(`Installing dependencies with ${pm}...`);
   try {
     await execa(pm, ['install'], { cwd: targetDir, stdin: 'ignore' });
     spinnerSucceed(spinner, 'Dependencies installed.');

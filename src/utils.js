@@ -1,5 +1,6 @@
 import fs from 'fs-extra';
 import path from 'node:path';
+import ora from 'ora';
 import pc from 'picocolors';
 
 /**
@@ -79,18 +80,41 @@ export function detectPackageManager() {
 }
 
 /**
- * ora's ✔/✖ (U+2714/U+2718) are "ambiguous width" in Unicode — plenty of
- * terminal/font combinations (several Windows setups included) render them
- * two columns wide, which eats the single space ora inserts afterward and
- * glues the symbol straight onto the text. ora's own spacing is correct; this
- * just adds a second buffer space so a swallowed column still leaves a gap.
+ * This CLI's own spinner cadence — the sparkle cycle Claude Code's CLI
+ * itself "thinks" with — swapped in for ora's default dots so every running
+ * step (there are a dozen-plus of these across the codebase) looks the same.
+ * Every spinner should be created through this instead of calling ora()
+ * directly, so that stays true without threading options through each site.
  */
+const SPARKLE_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+
+export function createSpinner(text, { indent = 0 } = {}) {
+  return ora({ text, indent, color: 'cyan', spinner: { interval: 90, frames: SPARKLE_FRAMES } }).start();
+}
+
+/**
+ * Freezes a finished spinner into Claude Code's own two-line tool-call
+ * grammar (⏺ label / ⎿ result) instead of ora's single-line replace — the
+ * label that was running stays visible above the outcome, exactly like every
+ * tool call in Claude Code's own transcript. Two spaces (not one) after ⏺:
+ * it's in the same "ambiguous width" territory as ora's own ✔/✖ (plenty of
+ * terminal/font combinations render it two columns wide), so a single
+ * trailing space risks getting eaten and gluing the symbol onto the label.
+ */
+function finishSpinner(spinner, color, resultText) {
+  const pad = ' '.repeat(spinner.indent ?? 0);
+  const label = spinner.text;
+  spinner.stop();
+  console.log(`${pad}${color('⏺')}  ${label}`);
+  console.log(`${pad}   ${pc.dim('⎿')}  ${color(resultText)}`);
+}
+
 export function spinnerSucceed(spinner, text) {
-  spinner.succeed(` ${text}`);
+  finishSpinner(spinner, pc.green, text);
 }
 
 export function spinnerFail(spinner, text) {
-  spinner.fail(` ${text}`);
+  finishSpinner(spinner, pc.red, text);
 }
 
 /**

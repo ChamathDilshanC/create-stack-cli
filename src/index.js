@@ -56,6 +56,11 @@ function parseArgs() {
     .option('-q, --quality <name>', `code quality tooling (${[...QUALITY_VALUES].join(', ')})`)
     .option('--docker', 'add a Dockerfile + docker-compose.yml')
     .option('-p, --pm <manager>', `package manager (${PACKAGE_MANAGERS.join(', ')})`)
+    .option('--build-tool <tool>', 'Spring Boot only: maven or gradle')
+    .option('--packaging <type>', 'Spring Boot only: jar or war')
+    .option('--java-version <version>', 'Spring Boot only: Java version (e.g. 21, 17)')
+    .option('--dependencies <list>', 'Spring Boot only: comma-separated dependency ids, searched live from start.spring.io (e.g. web,data-jpa,postgresql)')
+    .option('--group-id <id>', 'Spring Boot only: Java group ID (default: com.example)')
     .option('--no-install', 'skip automatic dependency installation')
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
     .option('--overwrite', 'overwrite the target directory if it already exists')
@@ -75,6 +80,11 @@ function parseArgs() {
     quality: opts.quality,
     docker: opts.docker,
     pm: opts.pm,
+    buildTool: opts.buildTool,
+    packaging: opts.packaging,
+    javaVersion: opts.javaVersion,
+    dependencies: opts.dependencies,
+    groupId: opts.groupId,
     overwrite: Boolean(opts.overwrite),
     yes: Boolean(opts.yes),
     // Commander gives --no-install a default of `true`; only trust it when
@@ -153,6 +163,29 @@ function buildPreset(cli) {
     preset.pm = cli.pm;
   }
 
+  if (cli.buildTool) {
+    if (!['maven', 'gradle'].includes(cli.buildTool)) {
+      throw new Error(`Unknown --build-tool "${cli.buildTool}". Available: maven, gradle`);
+    }
+    preset.buildTool = cli.buildTool;
+  }
+
+  if (cli.packaging) {
+    if (!['jar', 'war'].includes(cli.packaging)) {
+      throw new Error(`Unknown --packaging "${cli.packaging}". Available: jar, war`);
+    }
+    preset.packaging = cli.packaging;
+  }
+
+  if (cli.javaVersion) preset.javaVersion = cli.javaVersion;
+  if (cli.dependencies) {
+    preset.springDependencies = cli.dependencies
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+  if (cli.groupId) preset.groupId = cli.groupId;
+
   if (cli.install !== undefined) preset.install = cli.install;
 
   return preset;
@@ -162,11 +195,13 @@ function assertNonInteractiveComplete(preset, cli) {
   if (!cli.yes) return;
   // Python frameworks force pm to 'pip' themselves (no npm-family package
   // manager applies), so --yes shouldn't demand -p for them the way it does
-  // for everything else.
+  // for everything else. Java is the same story, using whichever build tool
+  // was chosen (or defaulted below) instead.
   const frameworkDef = FRAMEWORKS[preset.projectType]?.find((f) => f.value === preset.framework);
   const isPython = frameworkDef?.runtime === 'python';
+  const isJava = frameworkDef?.runtime === 'java';
 
-  const required = ['projectName', 'projectType', 'framework', ...(isPython ? [] : ['pm'])];
+  const required = ['projectName', 'projectType', 'framework', ...(isPython || isJava ? [] : ['pm'])];
   const missing = required.filter((key) => preset[key] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -182,6 +217,14 @@ function assertNonInteractiveComplete(preset, cli) {
   if (preset.docker === undefined) preset.docker = false;
   if (preset.install === undefined) preset.install = true;
   if (isPython) preset.pm = 'pip';
+  if (isJava) {
+    if (preset.buildTool === undefined) preset.buildTool = 'maven';
+    if (preset.packaging === undefined) preset.packaging = 'jar';
+    if (preset.javaVersion === undefined) preset.javaVersion = '21';
+    if (preset.springDependencies === undefined) preset.springDependencies = ['web'];
+    preset.pm = preset.buildTool;
+    preset.install = false;
+  }
 }
 
 async function confirmOverwrite(targetDir, cli) {
@@ -228,6 +271,14 @@ function devCommand(options) {
     if (framework === 'fastapi') return 'uvicorn app.main:app --reload';
   }
 
+  if (options.runtime === 'java') {
+    // Spring Initializr ships both mvnw/gradlew (POSIX) and mvnw.cmd/gradlew.bat
+    // (Windows) in every generated project — pick whichever this OS can run.
+    const isWindows = process.platform === 'win32';
+    if (options.buildTool === 'gradle') return isWindows ? 'gradlew.bat bootRun' : './gradlew bootRun';
+    return isWindows ? 'mvnw.cmd spring-boot:run' : './mvnw spring-boot:run';
+  }
+
   const runPrefix = pm === 'npm' ? 'npm run' : pm;
   if (projectType === 'mobile') return 'npx expo start';
   if (framework === 'tauri') return `${runPrefix} tauri dev`;
@@ -247,13 +298,21 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   if (options.runtime === 'python') {
     steps.push(VENV_ACTIVATE);
     if (!installed) steps.push('pip install -r requirements.txt');
+  } else if (options.runtime === 'java') {
+    // Maven/Gradle's own wrapper resolves dependencies itself on first run — nothing separate to install.
   } else if (!installed) {
     steps.push(`${options.pm} install`);
   }
   steps.push(devCommand(options));
 
   const languageLabel =
-    options.language === 'ts' ? 'TypeScript' : options.language === 'python' ? 'Python' : 'JavaScript';
+    options.language === 'ts'
+      ? 'TypeScript'
+      : options.language === 'python'
+        ? 'Python'
+        : options.language === 'java'
+          ? 'Java'
+          : 'JavaScript';
 
   const lines = [
     // Two spaces, not one: ✔ (U+2714) renders full-width in some terminal
