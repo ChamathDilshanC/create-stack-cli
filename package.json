@@ -1,6 +1,6 @@
 {
   "name": "@chamathdilshanc/create-stack",
-  "version": "3.8.0",
+  "version": "3.8.1",
   "description": "The Ultimate Multi-Tiered Project Orchestrator — an interactive CLI that scaffolds Frontend, Fullstack, Backend, Desktop, and Mobile projects with each stack's own official tooling.",
   "type": "module",
   "license": "MIT",

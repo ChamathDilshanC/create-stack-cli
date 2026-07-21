@@ -1,3 +1,10 @@
+## [3.8.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.0...v3.8.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* embed the dragon mascot in the banner box instead of printing it standalone ([cc14f1a](https://github.com/ChamathDilshanC/create-stack-cli/commit/cc14f1aad56baa35b40bfa0502db4daab1b89bdc))
+
 # [3.8.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.7.0...v3.8.0) (2026-07-21)
 
 
