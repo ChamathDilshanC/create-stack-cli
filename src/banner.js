@@ -183,11 +183,13 @@ const MIN_TWO_COLUMN_WIDTH = 92;
  * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
  * style welcome banner); narrow ones fall back to a single stacked box.
  *
- * On terminals that actually support a native inline-image protocol (Kitty,
- * iTerm2 — checked via supports-terminal-graphics in terminalLogo.js), the
- * real assets/Logo.png renders above this box too. Every other terminal
- * (Windows Terminal, plain xterm, ...) just gets the box below, unchanged —
- * this is purely additive, never a replacement for it.
+ * The real assets/Logo.png also renders above this box on any real terminal
+ * (see terminalLogo.js): a native inline image on Kitty/iTerm2, or a 24-bit-
+ * color block-art rendering everywhere else with truecolor support — which
+ * is most terminals people actually use, Windows Terminal included. Only
+ * piped/non-TTY output (redirected to a file, CI logs) skips it entirely.
+ * Either way this is purely additive — the box below always renders too,
+ * unchanged.
  */
 export function printBanner(pkg) {
   const renderedLogo = tryRenderLogo();
