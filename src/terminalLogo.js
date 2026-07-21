@@ -8,6 +8,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOGO_PATH = path.join(__dirname, '..', 'assets', 'Logo.png');
 
 /**
+ * Which way (if any) this terminal can show assets/Logo.png: a real inline
+ * image via Kitty's or iTerm2's own graphics protocol ('native', highest
+ * quality); a 24-bit-color block-art approximation for every other real
+ * terminal with truecolor support ('blockart' — Sixel is deliberately not
+ * implemented as a third native protocol here, unlike the other two it needs
+ * real pixel-level encoding, and block-art already covers the same ground);
+ * or nothing at all for piped/non-TTY output ('none' — redirected to a file,
+ * CI logs, ... raw escape codes have no business there).
+ */
+export function getLogoKind() {
+  if (!process.stdout.isTTY) return 'none';
+  const support = supportsTerminalGraphics.stdout;
+  return support.kitty || support.iterm2 ? 'native' : 'blockart';
+}
+
+/**
  * iTerm2's inline image protocol (OSC 1337). Both this and Kitty's below
  * accept a raw PNG's bytes directly, base64-encoded — no pixel decoding
  * needed for this path.
@@ -36,6 +52,22 @@ function renderKitty(base64, widthCells) {
       return `\x1b_G${control};${chunk}\x1b\\`;
     })
     .join('');
+}
+
+/**
+ * Renders assets/Logo.png as a real inline image via whichever native
+ * protocol getLogoKind() found ('native' only — the caller decides when to
+ * call this). Returns null if the file can't be read for any reason; this
+ * is a cosmetic nice-to-have, never worth failing the CLI over.
+ */
+export function renderNativeLogo(widthCells = 24) {
+  try {
+    const support = supportsTerminalGraphics.stdout;
+    const base64 = fs.readFileSync(LOGO_PATH).toString('base64');
+    return support.kitty ? renderKitty(base64, widthCells) : renderIterm2(base64, widthCells);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -81,14 +113,6 @@ function averageRegion(png, x0, x1, y0, y1) {
 }
 
 /**
- * Below this, a cell counts as "empty" and prints as a plain space rather
- * than a colored block — low enough to keep the network graph's thin lines
- * and small dots visible (see the box-filter comment above), but still high
- * enough to skip the fully-transparent background outright.
- */
-const ALPHA_VISIBLE_THRESHOLD = 24;
-
-/**
  * Renders one row of the image as a line of half-block (▀) characters: each
  * terminal cell packs two source pixel-rows into one line of text —
  * foreground color = the top pixel, background color = the bottom one —
@@ -99,15 +123,15 @@ const ALPHA_VISIBLE_THRESHOLD = 24;
  * background shows through as the terminal's actual background — correct
  * on both light and dark themes, since neither is ever guessed at.
  */
-function renderBlockArtRow(png, cols, y0Top, y1Top, y0Bottom, y1Bottom) {
+function renderBlockArtRow(png, cols, threshold, y0Top, y1Top, y0Bottom, y1Bottom) {
   let line = '';
   for (let c = 0; c < cols; c++) {
     const x0 = Math.floor((c * png.width) / cols);
     const x1 = Math.floor(((c + 1) * png.width) / cols);
     const top = averageRegion(png, x0, x1, y0Top, y1Top);
     const bottom = averageRegion(png, x0, x1, y0Bottom, y1Bottom);
-    const topOn = top.a >= ALPHA_VISIBLE_THRESHOLD;
-    const bottomOn = bottom.a >= ALPHA_VISIBLE_THRESHOLD;
+    const topOn = top.a >= threshold;
+    const bottomOn = bottom.a >= threshold;
 
     if (!topOn && !bottomOn) {
       line += ' ';
@@ -125,62 +149,40 @@ function renderBlockArtRow(png, cols, y0Top, y1Top, y0Bottom, y1Bottom) {
 }
 
 /**
- * Universally-compatible fallback: real 24-bit color, no special terminal
- * protocol required — this is what actually shows up in Windows Terminal,
- * VS Code's integrated terminal, GNOME Terminal, and effectively every other
- * modern terminal, none of which speak Kitty's or iTerm2's native image
- * protocols. `cols` is rounded down to an even number since each pair of
- * source pixel-rows becomes one printed line.
+ * Renders assets/Logo.png as an array of lines of 24-bit-color block art —
+ * real color, no special terminal protocol required, which is what actually
+ * shows up in Windows Terminal, VS Code's integrated terminal, GNOME
+ * Terminal, and effectively every other modern terminal that isn't Kitty/
+ * iTerm2. Returns an array (not a joined string) so the caller can splice
+ * individual lines into a layout (e.g. banner.js's boxed left column)
+ * instead of only ever printing it as one standalone block; returns null if
+ * the asset can't be read/decoded for any reason.
+ *
+ * `cols` is rounded down to an even number since each pair of source
+ * pixel-rows becomes one printed line. `threshold` (0-255, how covered a
+ * cell must be by non-transparent pixels to render as visible) needs to go
+ * *down* as `cols` gets smaller: a coarser grid averages away more of the
+ * source's thin lines/dots per cell, and a small embedded render (e.g. 16
+ * cols, for banner.js's box) would come out looking nearly blank at the same
+ * threshold that looks right for a large standalone one (e.g. 60 cols).
  */
-function renderBlockArt(png, cols) {
-  const pixelCols = cols;
-  // Each printed line packs 2 source pixel-rows into 1 character cell (the
-  // half-block trick), and a terminal cell is roughly 1:2 (width:height) —
-  // those two facts cancel out, so the source pixel grid itself should be
-  // sampled at the *same* aspect ratio as the image, not doubled: rounded to
-  // an even number so the `r += 2` loop below never leaves a dangling row.
-  const pixelRows = Math.max(2, Math.round(pixelCols * (png.height / png.width)) & ~1);
-  const lines = [];
-
-  for (let r = 0; r < pixelRows; r += 2) {
-    const y0Top = Math.floor((r * png.height) / pixelRows);
-    const y1Top = Math.floor(((r + 1) * png.height) / pixelRows);
-    const y0Bottom = y1Top;
-    const y1Bottom = Math.floor(((r + 2) * png.height) / pixelRows);
-    lines.push(renderBlockArtRow(png, pixelCols, y0Top, y1Top, y0Bottom, y1Bottom));
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Renders assets/Logo.png for the terminal, in whichever way this terminal
- * can actually display it: a real inline image via Kitty's or iTerm2's own
- * graphics protocol where supported (highest quality, full resolution), or
- * a 24-bit-color block-art approximation everywhere else that's an actual
- * TTY (Sixel is deliberately not implemented as a third native protocol —
- * unlike the other two, it needs real pixel-level encoding, and the block-art
- * fallback below already covers the same ground at reasonable quality).
- * Piped/non-TTY output (redirected to a file, CI logs, ...) gets neither —
- * raw escape codes have no business in a log file. Returns null in that
- * case, or if anything here fails for any reason (missing/corrupt asset,
- * decode error) — this is a cosmetic nice-to-have, never worth failing the
- * CLI over; the caller falls back to the plain ASCII bars logo.
- */
-export function tryRenderLogo(widthCells = 24) {
-  if (!process.stdout.isTTY) return null;
-
-  const support = supportsTerminalGraphics.stdout;
+export function renderBlockArtLines(cols, threshold = 24) {
+  const evenCols = Math.max(2, cols & ~1);
 
   try {
-    if (support.kitty || support.iterm2) {
-      const base64 = fs.readFileSync(LOGO_PATH).toString('base64');
-      return support.kitty ? renderKitty(base64, widthCells) : renderIterm2(base64, widthCells);
+    const png = PNG.sync.read(fs.readFileSync(LOGO_PATH));
+    const pixelRows = Math.max(2, Math.round(evenCols * (png.height / png.width)) & ~1);
+    const lines = [];
+
+    for (let r = 0; r < pixelRows; r += 2) {
+      const y0Top = Math.floor((r * png.height) / pixelRows);
+      const y1Top = Math.floor(((r + 1) * png.height) / pixelRows);
+      const y0Bottom = y1Top;
+      const y1Bottom = Math.floor(((r + 2) * png.height) / pixelRows);
+      lines.push(renderBlockArtRow(png, evenCols, threshold, y0Top, y1Top, y0Bottom, y1Bottom));
     }
 
-    const png = PNG.sync.read(fs.readFileSync(LOGO_PATH));
-    const cols = Math.min(60, Math.max(20, (process.stdout.columns ?? 80) - 4)) & ~1;
-    return renderBlockArt(png, cols);
+    return lines;
   } catch {
     return null;
   }

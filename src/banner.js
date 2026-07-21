@@ -2,8 +2,20 @@ import os from 'node:os';
 import boxen from 'boxen';
 import pc from 'picocolors';
 
-import { tryRenderLogo } from './terminalLogo.js';
+import { hex } from './color.js';
+import { PROJECT_TYPES } from './prompts.js';
+import { getLogoKind, renderBlockArtLines, renderNativeLogo } from './terminalLogo.js';
 import { detectPackageManager } from './utils.js';
+
+/**
+ * Purely decorative — the bars logo's own pink-to-cyan gradient, unrelated
+ * to any project type. Six stops sampled evenly across a 10-color source
+ * gradient (indices 0,2,4,5,7,9), since the bars logo has always drawn six
+ * bars; PROJECT_TYPES' own six colors (prompts.js) are a separate palette
+ * used for actually labeling Frontend/Fullstack/etc. as categories, both in
+ * the picker and in this file's "Frontend · Fullstack · ..." summary line.
+ */
+const GRADIENT_COLORS = ['#f72585', '#7209b7', '#480ca8', '#3a0ca3', '#4361ee', '#4cc9f0'].map(hex);
 
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
 const visibleWidth = (text) => text.replace(ANSI_RE, '').length;
@@ -40,26 +52,47 @@ function prettyCwd() {
 }
 
 /**
- * Our own mark: a ◆ apex over six ascending, widening bars — one per
- * PROJECT_TYPES entry (prompts.js), in that same order and those same exact
- * colors (Frontend cyan, Fullstack magenta, Backend green, Desktop yellow,
- * Mobile red, AI/ML blue), each a little wider than the last. Reads as a
- * small "growing stack" rather than six identical blocks. The half-block
- * caps (▐…▌) are the same rounded-corner trick Claude Code's own mascot
- * uses, just drawn as our own shape — and, like the ◆ and █ already used
- * elsewhere in this file, they're plain Block Elements glyphs rather than
- * the "ambiguous width" Dingbats that cause ora's checkmark to glue onto
- * adjacent text in some terminal fonts.
+ * Our own mark: a ◆ apex over six ascending, widening bars in a pink-to-cyan
+ * gradient (GRADIENT_COLORS above), each a little wider than the last —
+ * reads as a small "growing stack" rather than six identical blocks. The
+ * half-block caps (▐…▌) are the same rounded-corner trick Claude Code's own
+ * mascot uses, just drawn as our own shape — and, like the ◆ and █ already
+ * used elsewhere in this file, they're plain Block Elements glyphs rather
+ * than the "ambiguous width" Dingbats that cause ora's checkmark to glue
+ * onto adjacent text in some terminal fonts.
  */
 function logo(width) {
   const bar = (color, w) => color(`▐${'█'.repeat(Math.max(0, w - 2))}▌`);
-  const colors = [pc.cyan, pc.magenta, pc.green, pc.yellow, pc.red, pc.blue];
   const minWidth = Math.max(6, Math.round(width / 2));
-  const step = (width - minWidth) / (colors.length - 1);
+  const step = (width - minWidth) / (GRADIENT_COLORS.length - 1);
   return [
     pc.bold(pc.white('◆')),
-    ...colors.map((color, i) => bar(color, Math.round(minWidth + step * i))),
+    ...GRADIENT_COLORS.map((color, i) => bar(color, Math.round(minWidth + step * i))),
   ];
+}
+
+/**
+ * What actually goes in the left column, in place of (or as) the logo: on
+ * terminals without a native image protocol but with real color support
+ * ('blockart' — Windows Terminal, VS Code's integrated terminal, most
+ * terminals people actually use), a small rendering of the real
+ * assets/Logo.png fits right where the abstract bars logo used to be,
+ * instead of only ever appearing as a large standalone image above the
+ * whole banner. `getLogoKind() === 'native'` terminals (Kitty/iTerm2)
+ * already get the real, full-resolution image printed above this box (see
+ * printBanner below), so they keep the bars logo here instead of a second,
+ * redundant small copy; the plain bars logo is also the fallback if the
+ * asset can't be read for any reason.
+ */
+function leftColumnLogo(width) {
+  if (getLogoKind() === 'blockart') {
+    // Lower threshold than a large standalone render needs (see
+    // terminalLogo.js) — averaging the sparse network-graph drawing down to
+    // this few columns dilutes coverage a lot more per cell.
+    const lines = renderBlockArtLines(width, 12);
+    if (lines && lines.length > 0) return lines;
+  }
+  return logo(width);
 }
 
 /** Two-column layout — left: identity/environment, right: tips/links. */
@@ -76,7 +109,7 @@ function printWideBanner(pkg, columns) {
   const left = [
     pc.bold(truncate(`Welcome, ${username}!`, leftWidth)),
     '',
-    ...centerLogoLines(logo(barWidth), leftWidth),
+    ...centerLogoLines(leftColumnLogo(barWidth), leftWidth),
     '',
     pc.dim(truncate(`Node ${process.version} · ${detectPackageManager()} detected`, leftWidth)),
     pc.dim(truncate(prettyCwd(), leftWidth)),
@@ -152,9 +185,7 @@ function printCompactBanner(pkg, columns) {
     `Scaffold ${pc.bold('production-ready apps')} with each stack's own official tooling —`,
     `no stale templates, ever.`,
     '',
-    pc.dim(
-      `${pc.cyan('Frontend')} · ${pc.magenta('Fullstack')} · ${pc.green('Backend')} · ${pc.yellow('Desktop')} · ${pc.red('Mobile')} · ${pc.blue('AI/ML')}`
-    ),
+    PROJECT_TYPES.map((t) => t.color(t.title)).join(' · '),
     '',
     pc.dim('─'.repeat(width)),
     '',
@@ -183,18 +214,21 @@ const MIN_TWO_COLUMN_WIDTH = 92;
  * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
  * style welcome banner); narrow ones fall back to a single stacked box.
  *
- * The real assets/Logo.png also renders above this box on any real terminal
- * (see terminalLogo.js): a native inline image on Kitty/iTerm2, or a 24-bit-
- * color block-art rendering everywhere else with truecolor support — which
- * is most terminals people actually use, Windows Terminal included. Only
- * piped/non-TTY output (redirected to a file, CI logs) skips it entirely.
- * Either way this is purely additive — the box below always renders too,
- * unchanged.
+ * The real assets/Logo.png shows up one of two ways, depending on
+ * getLogoKind() (terminalLogo.js): terminals with a native image protocol
+ * (Kitty/iTerm2) get it printed full-resolution above the box, since it's
+ * sharp enough to be worth the extra space; every other real terminal with
+ * color support instead gets a small rendering of it *inside* the box's
+ * left column, in place of the abstract bars logo (see leftColumnLogo
+ * above) — that's the common case (Windows Terminal, VS Code's integrated
+ * terminal, ...), so the box itself stays the one and only thing printed.
+ * Piped/non-TTY output gets neither; the box still renders with the plain
+ * bars logo either way.
  */
 export function printBanner(pkg) {
-  const renderedLogo = tryRenderLogo();
-  if (renderedLogo) {
-    process.stdout.write(`${renderedLogo}\n\n`);
+  if (getLogoKind() === 'native') {
+    const rendered = renderNativeLogo();
+    if (rendered) process.stdout.write(`${rendered}\n\n`);
   }
 
   const columns = process.stdout.columns ?? 80;

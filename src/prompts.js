@@ -1,6 +1,7 @@
 import path from 'node:path';
 import pc from 'picocolors';
 import { autocomplete, autocompleteMultiselect, groupMultiselect, log, multiselect, select, text } from '@clack/prompts';
+import { hex } from './color.js';
 import { pypiPackageExists, searchNpmPackages } from './packages.js';
 import { getSpringChoices } from './spring.js';
 import {
@@ -16,14 +17,23 @@ import {
  * `scaffolder` is the id scaffold.js dispatches on; `viteTemplate` is only
  * present for frameworks create-vite itself supports; `forceLanguage` skips
  * Q3 entirely for frameworks that only ship a TypeScript template.
+ *
+ * Colors are real 24-bit hex (via color.js's `hex()`), not picocolors' 16
+ * standard ANSI ones — ANSI blue in particular renders as a near-unreadable
+ * dark navy on a plain black terminal background, which is exactly the
+ * problem these six were picked to avoid (all vibrant/light enough to read
+ * clearly regardless of terminal theme). banner.js reuses these same six
+ * for the "Frontend · Fullstack · ..." summary line, so the picker below and
+ * that summary always agree on which color means which project type; the
+ * banner's own decorative bars/gradient are a separate, unrelated palette.
  */
 export const PROJECT_TYPES = [
-  { value: 'frontend', title: 'Frontend', color: pc.cyan },
-  { value: 'fullstack', title: 'Fullstack', color: pc.magenta },
-  { value: 'backend', title: 'Backend', color: pc.green },
-  { value: 'desktop', title: 'Desktop', color: pc.yellow },
-  { value: 'mobile', title: 'Mobile', color: pc.red },
-  { value: 'ai', title: 'AI / ML', color: pc.blue },
+  { value: 'frontend', title: 'Frontend', color: hex('#9b5de5') },
+  { value: 'fullstack', title: 'Fullstack', color: hex('#f15bb5') },
+  { value: 'backend', title: 'Backend', color: hex('#fee440') },
+  { value: 'desktop', title: 'Desktop', color: hex('#00bbf9') },
+  { value: 'mobile', title: 'Mobile', color: hex('#00f5d4') },
+  { value: 'ai', title: 'AI / ML', color: hex('#5a189a') },
 ];
 
 export const FRAMEWORKS = {
