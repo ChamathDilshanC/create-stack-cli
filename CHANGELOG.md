@@ -1,3 +1,10 @@
+## [3.4.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.4.0...v3.4.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* make project-type search match nested framework names ([2fb58f8](https://github.com/ChamathDilshanC/create-stack-cli/commit/2fb58f89eb1478685a9b181300c70546f844506b))
+
 # [3.4.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.3.1...v3.4.0) (2026-07-21)
 
 
