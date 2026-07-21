@@ -1,3 +1,10 @@
+# [3.6.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.5.0...v3.6.0) (2026-07-21)
+
+
+### Features
+
+* give Rust/Flutter real folder structure, add real logo + editor launch ([36f138f](https://github.com/ChamathDilshanC/create-stack-cli/commit/36f138f78cac281bbd2ca58074d6643e2f058067))
+
 # [3.5.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.4.1...v3.5.0) (2026-07-21)
 
 
