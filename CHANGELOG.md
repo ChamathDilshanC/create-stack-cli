@@ -1,3 +1,10 @@
+## [3.8.2](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.1...v3.8.2) (2026-07-21)
+
+
+### Bug Fixes
+
+* cap the banner box at a fixed max width ([33c30f0](https://github.com/ChamathDilshanC/create-stack-cli/commit/33c30f068bcece5267c2e6341e6ba1ccaef30fdf))
+
 ## [3.8.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.0...v3.8.1) (2026-07-21)
 
 
