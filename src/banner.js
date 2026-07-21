@@ -202,14 +202,28 @@ function printCompactBanner(pkg, columns) {
 const MIN_TWO_COLUMN_WIDTH = 92;
 
 /**
+ * The box's own hard ceiling, regardless of how wide the actual terminal
+ * is — an ultrawide monitor or a maximized window can easily report several
+ * hundred columns, and stretching the box edge-to-edge on one just leaves
+ * the right column's short tip lines swimming in mostly-empty space. A
+ * fixed maximum keeps the banner's proportions the same on every screen
+ * size, the same way it already does on typical/narrower ones. 100 was
+ * checked against every line this banner actually prints (the longest is
+ * the `pick from Frontend/Fullstack/.../AI-ML` tip hint) with room to
+ * spare — nothing here wraps or truncates at that width.
+ */
+const MAX_BANNER_WIDTH = 100;
+
+/**
  * The startup screen. Wide terminals get a two-column layout (identity/logo
  * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
  * style welcome banner) with the dragon mascot embedded in the left column
  * (see leftColumnLogo above); narrow ones fall back to a single stacked box
- * without it (there's no left column there to put it in).
+ * without it (there's no left column there to put it in). Either way, the
+ * box itself never grows past MAX_BANNER_WIDTH — see above.
  */
 export function printBanner(pkg) {
-  const columns = process.stdout.columns ?? 80;
+  const columns = Math.min(process.stdout.columns ?? 80, MAX_BANNER_WIDTH);
   if (columns >= MIN_TWO_COLUMN_WIDTH) {
     printWideBanner(pkg, columns);
   } else {
