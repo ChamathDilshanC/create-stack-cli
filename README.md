@@ -53,6 +53,7 @@ Most scaffolders fall into one of two camps: a single-framework tool that does o
 - **Enterprise folder structure** — a `.gitkeep`-tracked, feature-sliced layout, applied consistently across every project type (including Fullstack), placed in each framework's own real source directory — `src/`, Nuxt's `app/`, a Django project's settings package — never somewhere that fights the framework's own routing conventions.
 - **`.env` / `.env.local` / `.env.production`** generated for every project, with each framework's own client-exposed variable prefix (`VITE_`, `NEXT_PUBLIC_`, `PUBLIC_`, `NUXT_PUBLIC_`, `EXPO_PUBLIC_`) applied automatically, and `.env.local` gitignored by default.
 - **Auto-installs dependencies** with your package manager of choice — npm, yarn, pnpm, bun — or pip inside a fresh venv for Python.
+- **Extra packages, searched live** — an optional step for every Node or Python project type: search the live npm registry (or check a name against PyPI) and add whatever you find, the same "search and add, never bundle a list" idea as Spring Boot's dependency picker, extended to every other ecosystem this CLI touches.
 - **One connected terminal UI, start to finish** — built on [`@clack/prompts`](https://github.com/bombshell-dev/clack) (the same engine behind `create-astro`, `sv create`, and shadcn/ui's CLI), so every question, spinner, and the closing summary render as a single continuous thread instead of a patchwork of differently-styled prompts.
 - **Non-interactive mode** via CLI flags, for scripting and CI.
 - **Never leaves you stranded** — a failed network install, an existing non-empty directory, Ctrl+C mid-prompt: every one of these ends in a clear message and a project you can still finish setting up by hand, not a stack trace.
@@ -121,6 +122,7 @@ Install dependencies now? Yes
 | Build tool, packaging, Java version, dependencies | Spring Boot only | Maven/Gradle · Jar/War · whichever Java versions start.spring.io currently offers · its full dependency catalog, searched live (see below) |
 | Hot reload | Spring Boot only | Yes (default) / No — wires in `spring-boot-devtools`; see below |
 | Code quality | always | **Node:** ESLint + Prettier, Biome, None · **Python:** Ruff, Black + Flake8, None — not yet automated for Spring Boot |
+| Extra packages | Node and Python (not Spring Boot) | No (default) / Yes — search npm or check PyPI live and add whatever you find; see below |
 | Docker | always | Yes / No |
 | Package manager | Node frameworks only | npm, yarn, pnpm, bun — Python always uses pip in a fresh `.venv`, Spring Boot always uses its own Maven/Gradle wrapper |
 | Install now | always | Yes / No — Spring Boot skips this too, since its wrapper resolves dependencies itself on first run |
@@ -139,6 +141,14 @@ Answering "Yes" here (the default) adds `spring-boot-devtools` to the project, w
 
 - **Gradle** has a built-in answer: `--continuous`, which is exactly why the "Next steps" dev command becomes `./gradlew bootRun --continuous` instead of the plain `bootRun` — Gradle watches your source files itself and re-triggers the build, DevTools does the rest. Nothing extra to install.
 - **Maven** has no built-in watch mode, so `./mvnw spring-boot:run` alone won't auto-reload on save from a bare terminal — DevTools is still on the classpath and will restart the app the moment *something* recompiles the changed classes, which normally means your IDE's "build automatically" setting, or running `./mvnw compile` by hand after each change. The CLI flags this in the final summary whenever you pick Maven with hot reload on, and points at `--build-tool gradle` for the fully automatic version.
+
+### Extra packages, searched live (Node and Python)
+
+Spring Boot's dependency picker works because Spring Initializr's whole catalog is small enough (~150 entries) to fetch once and filter client-side. npm has millions of packages — there's no equivalent single fetch — so this works as a loop instead: type a search term, pick zero or more of the (up to 15) results returned by npm's own public search API, and repeat with another term, or leave the search box blank to finish. Picked packages get installed with whatever version is actually latest on npm right now, resolved at the moment of installation, the same "pin a floor, don't guess" approach every other Node dependency in this CLI already uses.
+
+PyPI is different again: its public search API was retired years ago, so there's no live catalog to search at all. Instead, this asks for exact package names one at a time and checks each one is real (`pypi.org/pypi/<name>/json`) before adding it — still live, just a verification rather than a search.
+
+Either way, nothing not found is added silently: a name that doesn't resolve on npm or PyPI shows up in the final summary's "Heads up" section instead, whether it came from the interactive loop or `--extra-packages`.
 
 ## Frameworks by project type
 
@@ -184,6 +194,7 @@ npx @chamathdilshanc/create-stack my-api \
 | `--dependencies <list>` | Spring Boot only: comma-separated dependency ids, searched live from start.spring.io (e.g. `web,data-jpa,postgresql`) — defaults to `web` |
 | `--group-id <id>` | Spring Boot only: Java group ID (default: `com.example`) |
 | `--no-hot-reload` | Spring Boot only: skip `spring-boot-devtools` / auto-restart wiring (on by default) |
+| `--extra-packages <list>` | Comma-separated extra packages, verified live before adding — npm for Node projects, PyPI for Python (Spring Boot: use `--dependencies` instead) |
 | `--no-install` | Skip automatic dependency installation |
 | `-y, --yes` | Skip prompts; fails if a required option isn't supplied via flags |
 | `--overwrite` | Overwrite the target directory if it already exists, without prompting |
@@ -288,6 +299,7 @@ create-stack-cli/
 │   ├── scaffold-utils.js       # Shared execa/spinner/package.json plumbing (Node)
 │   ├── python-utils.js         # Shared venv/pip plumbing (Python)
 │   ├── spring.js               # Live start.spring.io metadata + project generation (Java)
+│   ├── packages.js             # Live npm search / PyPI existence checks for extra packages
 │   ├── styling.js              # Tailwind v4 + UnoCSS wiring
 │   ├── database.js             # Prisma / Drizzle / Mongoose setup
 │   ├── quality.js              # ESLint+Prettier / Biome setup

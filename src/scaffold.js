@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { applyDatabase } from './database.js';
 import { applyDocker } from './docker.js';
 import { appendEnvVars, applyEnvFiles } from './env.js';
+import { applyExtraPackages } from './packages.js';
 import { applyQuality } from './quality.js';
 import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
 import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
@@ -917,6 +918,9 @@ export async function scaffoldProject(options) {
   if (!handler) throw new Error(`Unknown project type: ${options.projectType}`);
 
   await handler(options, warnings);
+  // Whatever was picked in stepExtraPackages (Node/Python only — Spring's own
+  // dependency step already covers Java) — a no-op when nothing was picked.
+  await applyExtraPackages(options, warnings);
   // Every project type gets .env/.env.local/.env.production, regardless of
   // which handler ran — one call here instead of one per handler.
   await applyEnvFiles(options, warnings);

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import pc from 'picocolors';
-import { autocompleteMultiselect, select, text } from '@clack/prompts';
+import { autocompleteMultiselect, log, multiselect, select, text } from '@clack/prompts';
+import { pypiPackageExists, searchNpmPackages } from './packages.js';
 import { getSpringChoices } from './spring.js';
 import {
   detectPackageManager,
@@ -453,6 +454,79 @@ async function stepQuality(result) {
   return 'ok';
 }
 
+/**
+ * The same "search live, never bundle" idea Spring Boot's dependency picker
+ * uses, extended to Node and Python. Unlike Spring Initializr's ~150-entry
+ * catalog (small enough to fetch whole and filter client-side), npm has
+ * millions of packages, so this loops instead: search a term, pick from that
+ * batch, repeat until the search box is left blank. PyPI retired its public
+ * search API years ago, so the closest live equivalent there is checking
+ * each name actually exists on PyPI before adding it. Skipped entirely for
+ * Java — Spring's own dependency step already covers that ecosystem.
+ */
+async function stepExtraPackages(result) {
+  if (result.runtime !== 'node' && result.runtime !== 'python') return 'skip';
+  if (result.extraPackages !== undefined) return 'skip';
+
+  const isPython = result.runtime === 'python';
+  const wantsMore = guardCancel(
+    await select({
+      message: `Add extra ${isPython ? 'PyPI' : 'npm'} packages? (checked live, never bundled in this CLI)`,
+      options: withBack([
+        { value: false, label: 'No' },
+        { value: true, label: 'Yes' },
+      ]),
+      initialValue: false,
+    })
+  );
+  if (wantsMore === BACK) return 'back';
+
+  const picked = [];
+  if (wantsMore && isPython) {
+    while (true) {
+      const name = guardCancel(
+        await text({ message: 'PyPI package name (leave blank to finish):', placeholder: 'e.g. requests' })
+      );
+      if (!name?.trim()) break;
+      const exists = await pypiPackageExists(name.trim());
+      if (!exists) {
+        log.error(`"${name.trim()}" was not found on PyPI — check the spelling and try again.`);
+        continue;
+      }
+      if (!picked.includes(name.trim())) picked.push(name.trim());
+    }
+  } else if (wantsMore) {
+    while (true) {
+      const query = guardCancel(
+        await text({ message: 'Search npm packages (leave blank to finish):', placeholder: 'e.g. axios, zod, dayjs' })
+      );
+      if (!query?.trim()) break;
+
+      let matches;
+      try {
+        matches = await searchNpmPackages(query.trim());
+      } catch (err) {
+        log.error(`npm search failed (${err.message}) — check your connection and try again.`);
+        continue;
+      }
+      if (matches.length === 0) {
+        log.warn(`No npm packages found for "${query.trim()}".`);
+        continue;
+      }
+
+      const chosen = guardCancel(
+        await multiselect({ message: `Results for "${query.trim()}":`, options: matches, required: false })
+      );
+      for (const name of chosen) {
+        if (!picked.includes(name)) picked.push(name);
+      }
+    }
+  }
+
+  result.extraPackages = picked;
+  return 'ok';
+}
+
 async function stepDocker(result) {
   if (result.docker !== undefined) return 'skip';
   const docker = guardCancel(
@@ -530,6 +604,7 @@ const STEPS = [
   stepSpringDependencies,
   stepSpringHotReload,
   stepQuality,
+  stepExtraPackages,
   stepDocker,
   stepPackageManager,
   stepInstall,

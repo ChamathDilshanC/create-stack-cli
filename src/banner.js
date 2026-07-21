@@ -39,23 +39,25 @@ function prettyCwd() {
 }
 
 /**
- * Our own mark: a small ◆ peak over four pill-shaped bars, in the exact
- * colors PROJECT_TYPES uses for Frontend/Fullstack/Backend/Desktop (prompts.js)
- * — a literal little "stack" topped with the same ◆ used as the compact
- * banner's title bullet. The half-block caps (▐…▌) are the same rounded-corner
- * trick Claude Code's own mascot uses, just drawn as our own shape — and,
- * like the ◆ and █ already used elsewhere in this file, they're plain Block
- * Elements glyphs rather than the "ambiguous width" Dingbats that cause ora's
- * checkmark to glue onto adjacent text in some terminal fonts.
+ * Our own mark: a ◆ apex over five ascending, widening bars — one per
+ * PROJECT_TYPES entry (prompts.js), in that same order and those same exact
+ * colors (Frontend cyan, Fullstack magenta, Backend green, Desktop yellow,
+ * Mobile red), each a little wider than the last. Reads as a small "growing
+ * stack" rather than five identical blocks. The half-block caps (▐…▌) are
+ * the same rounded-corner trick Claude Code's own mascot uses, just drawn as
+ * our own shape — and, like the ◆ and █ already used elsewhere in this file,
+ * they're plain Block Elements glyphs rather than the "ambiguous width"
+ * Dingbats that cause ora's checkmark to glue onto adjacent text in some
+ * terminal fonts.
  */
 function logo(width) {
-  const bar = (color) => color(`▐${'█'.repeat(Math.max(0, width - 2))}▌`);
+  const bar = (color, w) => color(`▐${'█'.repeat(Math.max(0, w - 2))}▌`);
+  const colors = [pc.cyan, pc.magenta, pc.green, pc.yellow, pc.red];
+  const minWidth = Math.max(6, Math.round(width / 2));
+  const step = (width - minWidth) / (colors.length - 1);
   return [
     pc.bold(pc.white('◆')),
-    bar(pc.cyan),
-    bar(pc.green),
-    bar(pc.red),
-    bar(pc.yellow),
+    ...colors.map((color, i) => bar(color, Math.round(minWidth + step * i))),
   ];
 }
 

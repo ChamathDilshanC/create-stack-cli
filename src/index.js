@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { confirm, intro, note, outro } from '@clack/prompts';
+import { box, confirm, intro, outro } from '@clack/prompts';
 import { Command } from 'commander';
 import pc from 'picocolors';
 
@@ -62,6 +62,7 @@ function parseArgs() {
     .option('--dependencies <list>', 'Spring Boot only: comma-separated dependency ids, searched live from start.spring.io (e.g. web,data-jpa,postgresql)')
     .option('--group-id <id>', 'Spring Boot only: Java group ID (default: com.example)')
     .option('--no-hot-reload', 'Spring Boot only: skip DevTools / auto-restart-on-change wiring')
+    .option('--extra-packages <list>', 'comma-separated extra packages to add — npm for Node projects, PyPI for Python (Spring Boot: use --dependencies instead)')
     .option('--no-install', 'skip automatic dependency installation')
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
     .option('--overwrite', 'overwrite the target directory if it already exists')
@@ -86,6 +87,7 @@ function parseArgs() {
     javaVersion: opts.javaVersion,
     dependencies: opts.dependencies,
     groupId: opts.groupId,
+    extraPackages: opts.extraPackages,
     overwrite: Boolean(opts.overwrite),
     yes: Boolean(opts.yes),
     // Commander gives --no-install/--no-hot-reload a default of `true`; only
@@ -188,6 +190,12 @@ function buildPreset(cli) {
   }
   if (cli.groupId) preset.groupId = cli.groupId;
   if (cli.hotReload !== undefined) preset.springHotReload = cli.hotReload;
+  if (cli.extraPackages) {
+    preset.extraPackages = cli.extraPackages
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean);
+  }
 
   if (cli.install !== undefined) preset.install = cli.install;
 
@@ -217,6 +225,7 @@ function assertNonInteractiveComplete(preset, cli) {
   if (preset.styling === undefined) preset.styling = 'none';
   if (preset.database === undefined && !frameworkDef?.forceDatabase) preset.database = 'none';
   if (preset.quality === undefined) preset.quality = 'none';
+  if (preset.extraPackages === undefined) preset.extraPackages = [];
   if (preset.docker === undefined) preset.docker = false;
   if (preset.install === undefined) preset.install = true;
   if (isPython) preset.pm = 'pip';
@@ -271,9 +280,15 @@ function devCommand(options) {
   if (options.runtime === 'java') {
     // Spring Initializr ships both mvnw/gradlew (POSIX) and mvnw.cmd/gradlew.bat
     // (Windows) in every generated project — pick whichever this OS can run.
+    // The `.\` prefix is required on Windows too, not just POSIX's `./`: it's
+    // harmless in cmd.exe (which searches the current directory anyway) but
+    // mandatory in PowerShell, which refuses to run a same-directory script
+    // by bare name ("not recognized...") without an explicit path — and
+    // PowerShell, not cmd.exe, is what most Windows users actually have open.
     const isWindows = process.platform === 'win32';
+    const dot = isWindows ? '.\\' : './';
     if (options.buildTool === 'gradle') {
-      const gradlew = isWindows ? 'gradlew.bat' : './gradlew';
+      const gradlew = `${dot}${isWindows ? 'gradlew.bat' : 'gradlew'}`;
       // --continuous is Gradle's own file-watcher: paired with DevTools (on
       // the classpath whenever hot reload was requested), it re-triggers the
       // build the moment a source file changes and DevTools restarts the app
@@ -282,7 +297,7 @@ function devCommand(options) {
       // that build tool can offer (see the warning pushed in scaffold.js).
       return options.springHotReload ? `${gradlew} bootRun --continuous` : `${gradlew} bootRun`;
     }
-    return isWindows ? 'mvnw.cmd spring-boot:run' : './mvnw spring-boot:run';
+    return `${dot}${isWindows ? 'mvnw.cmd' : 'mvnw'} spring-boot:run`;
   }
 
   const runPrefix = pm === 'npm' ? 'npm run' : pm;
@@ -336,7 +351,10 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
     }
   }
 
-  note(lines.join('\n'), `${options.packageName} is ready!`);
+  // box() over note(): note() always auto-sizes to its longest line, which
+  // leaves the closing summary noticeably narrower than the banner above it.
+  // An explicit width stretches it to match instead.
+  box(lines.join('\n'), `${options.packageName} is ready!`, { width: process.stdout.columns ?? 80 });
   outro(warnings.length > 0 ? pc.yellow('Done — a few things above need your attention.') : pc.green('Done. Happy building!'));
 }
 
@@ -344,11 +362,14 @@ async function main() {
   const cli = parseArgs();
   if (!cli.yes) {
     printBanner(pkg);
-    // Opens the clack thread every question, spinner, and the closing note()/
+    // Opens the clack thread every question, spinner, and the closing box()/
     // outro() below all render into — one continuous connected flow from the
     // first question to the last file written, instead of separate,
-    // differently-styled UI libraries stitched together.
-    intro(pc.bgCyan(pc.black(' create-stack ')));
+    // differently-styled UI libraries stitched together. Padded to (nearly)
+    // the terminal's full width so the badge reads as a deliberate banner
+    // rather than a stray fragment next to a wide, empty line.
+    const introWidth = Math.max(20, (process.stdout.columns ?? 80) - 4);
+    intro(pc.bgCyan(pc.black(' create-stack '.padEnd(introWidth))));
   }
 
   const preset = buildPreset(cli);
