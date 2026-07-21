@@ -4,7 +4,7 @@ import pc from 'picocolors';
 
 import { hex } from './color.js';
 import { PROJECT_TYPES } from './prompts.js';
-import { getLogoKind, renderBlockArtLines, renderNativeLogo } from './terminalLogo.js';
+import { renderDragonLines } from './terminalLogo.js';
 import { detectPackageManager } from './utils.js';
 
 /**
@@ -71,30 +71,6 @@ function logo(width) {
   ];
 }
 
-/**
- * What actually goes in the left column, in place of (or as) the logo: on
- * terminals without a native image protocol but with real color support
- * ('blockart' — Windows Terminal, VS Code's integrated terminal, most
- * terminals people actually use), a small rendering of the real
- * assets/Logo.png fits right where the abstract bars logo used to be,
- * instead of only ever appearing as a large standalone image above the
- * whole banner. `getLogoKind() === 'native'` terminals (Kitty/iTerm2)
- * already get the real, full-resolution image printed above this box (see
- * printBanner below), so they keep the bars logo here instead of a second,
- * redundant small copy; the plain bars logo is also the fallback if the
- * asset can't be read for any reason.
- */
-function leftColumnLogo(width) {
-  if (getLogoKind() === 'blockart') {
-    // Lower threshold than a large standalone render needs (see
-    // terminalLogo.js) — averaging the sparse network-graph drawing down to
-    // this few columns dilutes coverage a lot more per cell.
-    const lines = renderBlockArtLines(width, 12);
-    if (lines && lines.length > 0) return lines;
-  }
-  return logo(width);
-}
-
 /** Two-column layout — left: identity/environment, right: tips/links. */
 function printWideBanner(pkg, columns) {
   const leftWidth = 30;
@@ -109,7 +85,7 @@ function printWideBanner(pkg, columns) {
   const left = [
     pc.bold(truncate(`Welcome, ${username}!`, leftWidth)),
     '',
-    ...centerLogoLines(leftColumnLogo(barWidth), leftWidth),
+    ...centerLogoLines(logo(barWidth), leftWidth),
     '',
     pc.dim(truncate(`Node ${process.version} · ${detectPackageManager()} detected`, leftWidth)),
     pc.dim(truncate(prettyCwd(), leftWidth)),
@@ -210,25 +186,22 @@ function printCompactBanner(pkg, columns) {
 const MIN_TWO_COLUMN_WIDTH = 92;
 
 /**
- * The startup screen. Wide terminals get a two-column layout (identity/logo
- * on the left, tips/links on the right, matching the Claude Code / Nuxt CLI
- * style welcome banner); narrow ones fall back to a single stacked box.
- *
- * The real assets/Logo.png shows up one of two ways, depending on
- * getLogoKind() (terminalLogo.js): terminals with a native image protocol
- * (Kitty/iTerm2) get it printed full-resolution above the box, since it's
- * sharp enough to be worth the extra space; every other real terminal with
- * color support instead gets a small rendering of it *inside* the box's
- * left column, in place of the abstract bars logo (see leftColumnLogo
- * above) — that's the common case (Windows Terminal, VS Code's integrated
- * terminal, ...), so the box itself stays the one and only thing printed.
- * Piped/non-TTY output gets neither; the box still renders with the plain
- * bars logo either way.
+ * The startup screen. The dragon mascot (terminalLogo.js) prints above
+ * everything else, on any real TTY with color support — same layout
+ * neofetch itself uses (mascot first, info panel after), and since it's
+ * plain colored text rather than a raster image, it renders identically
+ * regardless of terminal (no native-image-protocol detection needed). Below
+ * that, wide terminals get a two-column layout (identity/bars logo on the
+ * left, tips/links on the right, matching the Claude Code / Nuxt CLI style
+ * welcome banner); narrow ones fall back to a single stacked box. Piped/
+ * non-TTY output (redirected to a file, CI logs, ...) skips the dragon
+ * entirely — raw escape codes have no business there — but the box always
+ * renders either way.
  */
 export function printBanner(pkg) {
-  if (getLogoKind() === 'native') {
-    const rendered = renderNativeLogo();
-    if (rendered) process.stdout.write(`${rendered}\n\n`);
+  const dragonLines = renderDragonLines();
+  if (dragonLines) {
+    process.stdout.write(`${dragonLines.join('\n')}\n\n`);
   }
 
   const columns = process.stdout.columns ?? 80;

@@ -22,18 +22,21 @@ import {
  * standard ANSI ones — ANSI blue in particular renders as a near-unreadable
  * dark navy on a plain black terminal background, which is exactly the
  * problem these six were picked to avoid (all vibrant/light enough to read
- * clearly regardless of terminal theme). banner.js reuses these same six
- * for the "Frontend · Fullstack · ..." summary line, so the picker below and
- * that summary always agree on which color means which project type; the
+ * clearly regardless of terminal theme). Frontend/AI-ML originally used
+ * #9b5de5/#5a189a — both too dark/muted next to the other four's saturation
+ * on an actual black terminal — swapped for lighter stops off the same
+ * purple gradient family instead. banner.js reuses these same six for the
+ * "Frontend · Fullstack · ..." summary line, so the picker below and that
+ * summary always agree on which color means which project type; the
  * banner's own decorative bars/gradient are a separate, unrelated palette.
  */
 export const PROJECT_TYPES = [
-  { value: 'frontend', title: 'Frontend', color: hex('#9b5de5') },
+  { value: 'frontend', title: 'Frontend', color: hex('#c77dff') },
   { value: 'fullstack', title: 'Fullstack', color: hex('#f15bb5') },
   { value: 'backend', title: 'Backend', color: hex('#fee440') },
   { value: 'desktop', title: 'Desktop', color: hex('#00bbf9') },
   { value: 'mobile', title: 'Mobile', color: hex('#00f5d4') },
-  { value: 'ai', title: 'AI / ML', color: hex('#5a189a') },
+  { value: 'ai', title: 'AI / ML', color: hex('#e0aaff') },
 ];
 
 export const FRAMEWORKS = {
