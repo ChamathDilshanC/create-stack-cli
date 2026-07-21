@@ -1,3 +1,10 @@
+# [3.5.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.4.1...v3.5.0) (2026-07-21)
+
+
+### Features
+
+* add Actix-web backend and split Mobile into React Native, Expo, and Flutter ([43b5e59](https://github.com/ChamathDilshanC/create-stack-cli/commit/43b5e599430709213cd2434f9d04de4448ce0af4))
+
 ## [3.4.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.4.0...v3.4.1) (2026-07-21)
 
 
