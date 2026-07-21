@@ -1,3 +1,10 @@
+## [3.6.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.6.0...v3.6.1) (2026-07-21)
+
+
+### Bug Fixes
+
+* render the real logo on terminals without Kitty/iTerm2 too ([aa44cb9](https://github.com/ChamathDilshanC/create-stack-cli/commit/aa44cb94201c1b56969be191ca4e3eddff619dd4))
+
 # [3.6.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.5.0...v3.6.0) (2026-07-21)
 
 
