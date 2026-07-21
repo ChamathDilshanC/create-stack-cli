@@ -1,3 +1,15 @@
+# [3.4.0](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.3.1...v3.4.0) (2026-07-21)
+
+
+### Bug Fixes
+
+* bump CI Node version to 24 to avoid npm Arborist edgesOut bug ([ed566c2](https://github.com/ChamathDilshanC/create-stack-cli/commit/ed566c20e97197b4ea3866a213ee822bf0f6d439)), closes [npm/cli#8261](https://github.com/npm/cli/issues/8261)
+
+
+### Features
+
+* Add AI/ML type and Rust Axum backend ([3a11d39](https://github.com/ChamathDilshanC/create-stack-cli/commit/3a11d39f58c00f698bfb3d48c2672f1c4999fe57))
+
 ## [3.3.1](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.3.0...v3.3.1) (2026-07-21)
 
 
