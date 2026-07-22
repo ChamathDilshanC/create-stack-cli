@@ -49,11 +49,22 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"${mod}/internal/handlers"
+	"${mod}/internal/middleware"
+	"${mod}/internal/repository"
+	"${mod}/internal/services"
 )
 
 func NewRouter() *gin.Engine {
-	router := gin.Default()
-	router.GET("/", handlers.Root)
+	repo := repository.NewUserRepository()
+	userService := services.NewUserService(repo)
+	h := handlers.New(userService)
+
+	router := gin.New()
+	router.Use(gin.Recovery(), middleware.Logging())
+
+	router.GET("/", h.Root)
+	router.GET("/users", h.ListUsers)
+
 	return router
 }
 `;
@@ -66,10 +77,44 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"${mod}/internal/models"
+	"${mod}/internal/services"
 )
 
-func Root(c *gin.Context) {
+type Handlers struct {
+	users *services.UserService
+}
+
+func New(users *services.UserService) *Handlers {
+	return &Handlers{users: users}
+}
+
+func (h *Handlers) Root(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Message{Message: "Hello from Gin!"})
+}
+
+func (h *Handlers) ListUsers(c *gin.Context) {
+	c.JSON(http.StatusOK, h.users.ListUsers())
+}
+`;
+
+const GIN_MIDDLEWARE_GO = `package middleware
+
+import (
+	"log"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+// Logging is a small example of where cross-cutting concerns (auth,
+// rate limiting, request IDs, ...) belong — as their own middleware,
+// registered once in routes.go, instead of copy-pasted into every handler.
+func Logging() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		log.Printf("%s %s (%s)", c.Request.Method, c.Request.URL.Path, time.Since(start))
+	}
 }
 `;
 
@@ -104,11 +149,22 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"${mod}/internal/handlers"
+	"${mod}/internal/middleware"
+	"${mod}/internal/repository"
+	"${mod}/internal/services"
 )
 
 func NewApp() *fiber.App {
+	repo := repository.NewUserRepository()
+	userService := services.NewUserService(repo)
+	h := handlers.New(userService)
+
 	app := fiber.New()
-	app.Get("/", handlers.Root)
+	app.Use(middleware.Logging())
+
+	app.Get("/", h.Root)
+	app.Get("/users", h.ListUsers)
+
 	return app
 }
 `;
@@ -119,10 +175,45 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"${mod}/internal/models"
+	"${mod}/internal/services"
 )
 
-func Root(c *fiber.Ctx) error {
+type Handlers struct {
+	users *services.UserService
+}
+
+func New(users *services.UserService) *Handlers {
+	return &Handlers{users: users}
+}
+
+func (h *Handlers) Root(c *fiber.Ctx) error {
 	return c.JSON(models.Message{Message: "Hello from Fiber!"})
+}
+
+func (h *Handlers) ListUsers(c *fiber.Ctx) error {
+	return c.JSON(h.users.ListUsers())
+}
+`;
+
+const FIBER_MIDDLEWARE_GO = `package middleware
+
+import (
+	"log"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+// Logging is a small example of where cross-cutting concerns (auth,
+// rate limiting, request IDs, ...) belong — as their own middleware,
+// registered once in routes.go, instead of copy-pasted into every handler.
+func Logging() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		log.Printf("%s %s (%s)", c.Method(), c.Path(), time.Since(start))
+		return err
+	}
 }
 `;
 
@@ -157,11 +248,22 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"${mod}/internal/handlers"
+	"${mod}/internal/middleware"
+	"${mod}/internal/repository"
+	"${mod}/internal/services"
 )
 
 func NewEcho() *echo.Echo {
+	repo := repository.NewUserRepository()
+	userService := services.NewUserService(repo)
+	h := handlers.New(userService)
+
 	e := echo.New()
-	e.GET("/", handlers.Root)
+	e.Use(middleware.Logging)
+
+	e.GET("/", h.Root)
+	e.GET("/users", h.ListUsers)
+
 	return e
 }
 `;
@@ -174,18 +276,59 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"${mod}/internal/models"
+	"${mod}/internal/services"
 )
 
-func Root(c echo.Context) error {
+type Handlers struct {
+	users *services.UserService
+}
+
+func New(users *services.UserService) *Handlers {
+	return &Handlers{users: users}
+}
+
+func (h *Handlers) Root(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.Message{Message: "Hello from Echo!"})
+}
+
+func (h *Handlers) ListUsers(c echo.Context) error {
+	return c.JSON(http.StatusOK, h.users.ListUsers())
 }
 `;
 
-/** Shared across all three routers — a plain data struct, no framework-specific trait to differ on (same idea as scaffold.js's RUST_MODELS_RS). */
+const ECHO_MIDDLEWARE_GO = `package middleware
+
+import (
+	"log"
+	"time"
+
+	"github.com/labstack/echo/v4"
+)
+
+// Logging is a small example of where cross-cutting concerns (auth,
+// rate limiting, request IDs, ...) belong — as their own middleware,
+// registered once in routes.go, instead of copy-pasted into every handler.
+func Logging(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		start := time.Now()
+		err := next(c)
+		log.Printf("%s %s (%s)", c.Request().Method, c.Request().URL.Path, time.Since(start))
+		return err
+	}
+}
+`;
+
+/** Shared across all three routers — plain data structs, no framework-specific trait to differ on (same idea as scaffold.js's RUST_MODELS_RS). */
 const GO_MODELS_GO = `package models
 
 type Message struct {
 	Message string ` + '`json:"message"`' + `
+}
+
+type User struct {
+	ID    int    ` + '`json:"id"`' + `
+	Name  string ` + '`json:"name"`' + `
+	Email string ` + '`json:"email"`' + `
 }
 `;
 
@@ -202,10 +345,105 @@ func Port() string {
 }
 `;
 
+/**
+ * Shared across all three routers too — plain Go, no framework dependency.
+ * In-memory on purpose: this step doesn't force a database choice the way
+ * Spring's JPA-conditional model/repository pair does, so an in-memory map
+ * is what keeps this a real, working example instead of a stub — swap it
+ * for a real database-backed implementation once you've picked one; nothing
+ * above this layer (UserService) needs to change to do that.
+ */
+const GO_REPOSITORY_GO = (mod) => `package repository
+
+import (
+	"sync"
+
+	"${mod}/internal/models"
+)
+
+type UserRepository struct {
+	mu     sync.Mutex
+	users  map[int]models.User
+	nextID int
+}
+
+func NewUserRepository() *UserRepository {
+	return &UserRepository{
+		users: map[int]models.User{
+			1: {ID: 1, Name: "Ada Lovelace", Email: "ada@example.com"},
+		},
+		nextID: 2,
+	}
+}
+
+func (r *UserRepository) FindAll() []models.User {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	users := make([]models.User, 0, len(r.users))
+	for _, u := range r.users {
+		users = append(users, u)
+	}
+	return users
+}
+
+func (r *UserRepository) Create(name, email string) models.User {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user := models.User{ID: r.nextID, Name: name, Email: email}
+	r.users[user.ID] = user
+	r.nextID++
+	return user
+}
+`;
+
+/** Also shared — the business-logic layer between handlers and storage. Handlers call this, never the repository directly, so the storage backend can change without touching the HTTP layer. */
+const GO_SERVICES_GO = (mod) => `package services
+
+import (
+	"${mod}/internal/models"
+	"${mod}/internal/repository"
+)
+
+type UserService struct {
+	repo *repository.UserRepository
+}
+
+func NewUserService(repo *repository.UserRepository) *UserService {
+	return &UserService{repo: repo}
+}
+
+func (s *UserService) ListUsers() []models.User {
+	return s.repo.FindAll()
+}
+`;
+
 const GO_TEMPLATES = {
-  'go-gin': { label: 'Gin', goMod: GIN_GO_MOD, mainGo: GIN_MAIN_GO, routesGo: GIN_ROUTES_GO, handlersGo: GIN_HANDLERS_GO },
-  'go-fiber': { label: 'Fiber', goMod: FIBER_GO_MOD, mainGo: FIBER_MAIN_GO, routesGo: FIBER_ROUTES_GO, handlersGo: FIBER_HANDLERS_GO },
-  'go-echo': { label: 'Echo', goMod: ECHO_GO_MOD, mainGo: ECHO_MAIN_GO, routesGo: ECHO_ROUTES_GO, handlersGo: ECHO_HANDLERS_GO },
+  'go-gin': {
+    label: 'Gin',
+    goMod: GIN_GO_MOD,
+    mainGo: GIN_MAIN_GO,
+    routesGo: GIN_ROUTES_GO,
+    handlersGo: GIN_HANDLERS_GO,
+    middlewareGo: GIN_MIDDLEWARE_GO,
+  },
+  'go-fiber': {
+    label: 'Fiber',
+    goMod: FIBER_GO_MOD,
+    mainGo: FIBER_MAIN_GO,
+    routesGo: FIBER_ROUTES_GO,
+    handlersGo: FIBER_HANDLERS_GO,
+    middlewareGo: FIBER_MIDDLEWARE_GO,
+  },
+  'go-echo': {
+    label: 'Echo',
+    goMod: ECHO_GO_MOD,
+    mainGo: ECHO_MAIN_GO,
+    routesGo: ECHO_ROUTES_GO,
+    handlersGo: ECHO_HANDLERS_GO,
+    middlewareGo: ECHO_MIDDLEWARE_GO,
+  },
 };
 
 /**
@@ -214,8 +452,14 @@ const GO_TEMPLATES = {
  * this writes go.mod + main.go by hand instead of running an initializer.
  * The generic JS-shaped enterprise structure doesn't fit Go conventions
  * (same reasoning Rust/Spring Boot skip it), so this lays down Go's own
- * idiomatic package split instead: internal/{routes,handlers,models,config},
- * mirroring the module split scaffold.js's Rust handler already uses.
+ * layered package split instead — routes/handlers/middleware/services/
+ * repository/models/config — mirroring the controller/service/repository/
+ * model split spring.js's generateSpringStructure already builds for Spring
+ * Boot, adapted to Go's own handler-struct-plus-constructor idiom instead of
+ * Java's class-plus-annotation one. `GET /users` is real, working, wired
+ * all the way through (handler → service → in-memory repository), not a
+ * stub — the same "always have one working vertical slice" bar Spring's own
+ * Hello controller/service/dto chain sets.
  *
  * `go mod tidy` resolves + downloads dependencies (writing go.sum) the same
  * way `cargo build` does for Rust — there's no separate "install" step in
@@ -234,6 +478,9 @@ export async function handleGoBackend(options, warnings) {
   await fs.outputFile(path.join(targetDir, 'main.go'), template.mainGo(mod));
   await fs.outputFile(path.join(targetDir, 'internal', 'routes', 'routes.go'), template.routesGo(mod));
   await fs.outputFile(path.join(targetDir, 'internal', 'handlers', 'handlers.go'), template.handlersGo(mod));
+  await fs.outputFile(path.join(targetDir, 'internal', 'middleware', 'middleware.go'), template.middlewareGo);
+  await fs.outputFile(path.join(targetDir, 'internal', 'services', 'user_service.go'), GO_SERVICES_GO(mod));
+  await fs.outputFile(path.join(targetDir, 'internal', 'repository', 'user_repository.go'), GO_REPOSITORY_GO(mod));
   await fs.outputFile(path.join(targetDir, 'internal', 'models', 'models.go'), GO_MODELS_GO);
   await fs.outputFile(path.join(targetDir, 'internal', 'config', 'config.go'), GO_CONFIG_GO);
   // `go build` (no -o flag) drops a binary named after the module right at
@@ -242,7 +489,7 @@ export async function handleGoBackend(options, warnings) {
   // Rust's .gitignore keeps /target out.
   await fs.writeFile(path.join(targetDir, '.gitignore'), `/${mod}\n${mod}.exe\n.env\n`);
 
-  logger.dim(`  › Wrote go.mod + main.go + internal/{routes,handlers,models,config} by hand (${template.label} has no official project scaffolder).`);
+  logger.dim(`  › Wrote go.mod + main.go + internal/{routes,handlers,middleware,services,repository,models,config} by hand (${template.label} has no official project scaffolder).`);
 
   const goFound = await checkToolchain('go', ['version']);
   if (!goFound) {

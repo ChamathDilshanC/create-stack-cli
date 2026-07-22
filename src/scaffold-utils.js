@@ -57,12 +57,19 @@ export async function runScaffolder({ label, success, command, args, cwd, expect
   spinnerSucceed(spinner, success);
 }
 
-/** Runs an optional step behind a spinner; reports failure instead of throwing. */
-export async function tryRun({ label, success, failure, command, args, cwd }) {
+/**
+ * Runs an optional step behind a spinner; reports failure instead of
+ * throwing. `timeout` (ms) is for steps that run through a slow/unreliable
+ * external process (e.g. `php artisan migrate` under a PHP setup with
+ * Xdebug or similar attached) — execa kills the child and rejects once it's
+ * exceeded, so a genuinely stuck process can't hang the whole CLI forever;
+ * that rejection is handled the same as any other failure above.
+ */
+export async function tryRun({ label, success, failure, command, args, cwd, timeout }) {
   logger.dim(`  › ${formatCommand(command, args)}`);
   const spinner = createSpinner(label);
   try {
-    await execa(command, args, { cwd, stdin: 'ignore' });
+    await execa(command, args, { cwd, stdin: 'ignore', ...(timeout ? { timeout } : {}) });
     spinnerSucceed(spinner, success);
     return true;
   } catch (err) {
@@ -115,6 +122,21 @@ export async function mergeDependencies(targetDir, deps, field = 'devDependencie
 
 /** Back-compat alias — most call sites only ever touched devDependencies. */
 export const mergeDevDependencies = (targetDir, deps) => mergeDependencies(targetDir, deps, 'devDependencies');
+
+/** Adds `scripts` entries without overwriting one the scaffolder already defined (e.g. Next.js's own dev/build/start/lint) — same "never touch what's already resolved" idea as mergeDependencies above. */
+export async function mergeScripts(targetDir, scripts) {
+  const pkgPath = path.join(targetDir, 'package.json');
+  const pkg = await fs.readJson(pkgPath);
+
+  const existing = { ...(pkg.scripts ?? {}) };
+  for (const [name, command] of Object.entries(scripts)) {
+    if (existing[name]) continue;
+    existing[name] = command;
+  }
+
+  pkg.scripts = existing;
+  await fs.writeJson(pkgPath, pkg, { spaces: 2 });
+}
 
 /**
  * Installs `packages` (dev or runtime) with a live command when allowed on

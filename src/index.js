@@ -7,6 +7,7 @@ import pc from 'picocolors';
 
 import { printBanner } from './banner.js';
 import {
+  AUTH_OPTIONS,
   DATABASE_OPTIONS,
   DATABASE_OPTIONS_PYTHON,
   FRAMEWORKS,
@@ -16,6 +17,7 @@ import {
   QUALITY_OPTIONS_PYTHON,
   STYLING_OPTIONS,
   STYLING_OPTIONS_MOBILE,
+  TESTING_OPTIONS,
   getProjectOptions,
 } from './prompts.js';
 import { scaffoldProject } from './scaffold.js';
@@ -40,6 +42,8 @@ const DATABASE_VALUES = new Set(DATABASE_OPTIONS.map((d) => d.value));
 const DATABASE_VALUES_PYTHON = new Set(DATABASE_OPTIONS_PYTHON.map((d) => d.value));
 const QUALITY_VALUES = new Set(QUALITY_OPTIONS.map((q) => q.value));
 const QUALITY_VALUES_PYTHON = new Set(QUALITY_OPTIONS_PYTHON.map((q) => q.value));
+const TESTING_VALUES = new Set(TESTING_OPTIONS.map((t) => t.value));
+const AUTH_VALUES = new Set(AUTH_OPTIONS.map((a) => a.value));
 
 /**
  * Post-scaffold only — not part of the project decision tree (getProjectOptions),
@@ -71,6 +75,8 @@ function parseArgs() {
     .option('-l, --language <lang>', 'ts or js')
     .option('-s, --styling <name>', `styling (${[...STYLING_VALUES].join(', ')}) — mobile: ${[...STYLING_VALUES_MOBILE].join(', ')}`)
     .option('-d, --database <name>', `database/ORM (${[...DATABASE_VALUES].join(', ')})`)
+    .option('-a, --auth <name>', `authentication (${[...AUTH_VALUES].join(', ')}) — only Auth.js has real scaffolding behind it so far, and only for Next.js/Express`)
+    .option('-t, --testing <name>', `testing setup (${[...TESTING_VALUES].join(', ')}) — only Vitest has real scaffolding behind it so far`)
     .option('-q, --quality <name>', `code quality tooling (${[...QUALITY_VALUES].join(', ')})`)
     .option('--docker', 'add a Dockerfile + docker-compose.yml')
     .option('-p, --pm <manager>', `package manager (${PACKAGE_MANAGERS.join(', ')})`)
@@ -99,6 +105,8 @@ function parseArgs() {
     language: opts.language,
     styling: opts.styling,
     database: opts.database,
+    auth: opts.auth,
+    testing: opts.testing,
     quality: opts.quality,
     docker: opts.docker,
     pm: opts.pm,
@@ -182,6 +190,22 @@ function buildPreset(cli) {
       throw new Error(`Unknown --quality "${cli.quality}". Available: ${[...validQuality].join(', ')}`);
     }
     preset.quality = cli.quality;
+  }
+
+  // Node-only questions (no Python/Java/Rust/... variant to narrow between,
+  // unlike --database/--quality above) — invalid regardless of framework.
+  if (cli.auth) {
+    if (!AUTH_VALUES.has(cli.auth)) {
+      throw new Error(`Unknown --auth "${cli.auth}". Available: ${[...AUTH_VALUES].join(', ')}`);
+    }
+    preset.auth = cli.auth;
+  }
+
+  if (cli.testing) {
+    if (!TESTING_VALUES.has(cli.testing)) {
+      throw new Error(`Unknown --testing "${cli.testing}". Available: ${[...TESTING_VALUES].join(', ')}`);
+    }
+    preset.testing = cli.testing;
   }
 
   if (cli.docker !== undefined) preset.docker = Boolean(cli.docker);
@@ -273,6 +297,8 @@ function assertNonInteractiveComplete(preset, cli) {
   if (preset.language === undefined) preset.language = 'ts';
   if (preset.styling === undefined) preset.styling = 'none';
   if (preset.database === undefined && !frameworkDef?.forceDatabase) preset.database = 'none';
+  if (preset.auth === undefined) preset.auth = 'none';
+  if (preset.testing === undefined) preset.testing = 'none';
   if (preset.quality === undefined) preset.quality = 'none';
   if (preset.extraPackages === undefined) preset.extraPackages = [];
   if (preset.docker === undefined) preset.docker = false;
@@ -600,7 +626,7 @@ async function main() {
   const preset = buildPreset(cli);
   assertNonInteractiveComplete(preset, cli);
 
-  const options = await getProjectOptions(preset);
+  const options = await getProjectOptions(preset, { interactive: !cli.yes });
 
   const cwd = process.cwd();
   const targetDir = path.resolve(cwd, formatTargetDir(options.projectName));

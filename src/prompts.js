@@ -3,8 +3,10 @@ import pc from 'picocolors';
 import { autocomplete, autocompleteMultiselect, groupMultiselect, log, multiselect, select, text } from '@clack/prompts';
 import { hex } from './color.js';
 import { pypiPackageExists, searchNpmPackages } from './packages.js';
+import { checkToolchain } from './runtime-check.js';
 import { getSpringChoices } from './spring.js';
 import {
+  CancelledError,
   detectPackageManager,
   formatTargetDir,
   guardCancel,
@@ -319,12 +321,45 @@ export const QUALITY_OPTIONS_PYTHON = [
 
 export const PACKAGE_MANAGERS = ['npm', 'yarn', 'pnpm', 'bun'];
 
+/**
+ * Only Vitest has real scaffolding logic behind it (testing.js) — Jest,
+ * Playwright, and Cypress are still listed (rather than left off the menu
+ * entirely) so the question reflects the full space this CLI is growing
+ * toward; picking one of those three still scaffolds successfully, just
+ * with a "not yet wired" warning in the final summary instead of a real
+ * config, the same "not yet automated" story already true for Rust/Spring
+ * Boot's quality question.
+ */
+export const TESTING_OPTIONS = [
+  { value: 'vitest', title: 'Vitest' },
+  { value: 'jest', title: 'Jest' },
+  { value: 'playwright', title: 'Playwright' },
+  { value: 'cypress', title: 'Cypress' },
+  { value: 'none', title: 'None' },
+];
+
+/** Same "full menu, one real implementation" story as TESTING_OPTIONS above — only Auth.js has real scaffolding logic behind it (auth.js), and even then only for Next.js/Express (see stepAuth's callers in scaffold.js). */
+export const AUTH_OPTIONS = [
+  { value: 'authjs', title: 'Auth.js (NextAuth)' },
+  { value: 'clerk', title: 'Clerk' },
+  { value: 'lucia', title: 'Lucia' },
+  { value: 'passport', title: 'Passport' },
+  { value: 'none', title: 'None' },
+];
+
 /** Styling only makes sense where there's UI to style. Mobile included since NativeWind applies to React Native (bare or Expo) — Flutter opts back out itself, in stepStyling below. */
 export const supportsStyling = (projectType) =>
   projectType === 'frontend' || projectType === 'fullstack' || projectType === 'desktop' || projectType === 'mobile';
 
 /** A database/ORM only makes sense where there's a server to run it in. */
 export const supportsDatabase = (projectType) => projectType === 'backend' || projectType === 'fullstack';
+
+/** Testing makes sense anywhere there's Node code to test at all — including a plain frontend SPA, unlike Database above. */
+export const supportsTesting = (projectType) =>
+  projectType === 'frontend' || projectType === 'fullstack' || projectType === 'backend';
+
+/** Same reasoning as Database above — auth needs a server/session to hold, so this is never asked for a plain frontend SPA (or Desktop/Mobile/AI). */
+export const supportsAuth = (projectType) => projectType === 'backend' || projectType === 'fullstack';
 
 /** Sentinel a select-style step resolves to when the user picks "← Back" instead of answering. */
 const BACK = Symbol('back');
@@ -453,6 +488,60 @@ async function stepFramework(result) {
   return prompted ? 'ok' : 'skip';
 }
 
+/**
+ * Laravel/Rails/.NET/Fresh have no hand-written fallback (see backend-php.js/
+ * backend-ruby.js/backend-dotnet.js/backend-deno.js) — a missing toolchain
+ * there hard-fails the whole scaffold. Go/Oak/Ktor are deliberately absent
+ * from this table: those already write their hand-written files and just
+ * warn, so there's nothing for a preflight check to prevent.
+ */
+const OFFICIAL_TOOLCHAIN_REQUIREMENTS = {
+  laravel: [{ command: 'composer', versionArgs: ['--version'], label: 'Composer', installHint: 'https://getcomposer.org/download/' }],
+  rails: [
+    { command: 'ruby', versionArgs: ['--version'], label: 'Ruby', installHint: 'https://www.ruby-lang.org/en/downloads/' },
+    { command: 'rails', versionArgs: ['--version'], label: 'The Rails gem ("gem install rails")', installHint: 'https://www.ruby-lang.org/en/downloads/' },
+  ],
+  dotnet: [{ command: 'dotnet', versionArgs: ['--version'], label: 'The .NET SDK', installHint: 'https://dotnet.microsoft.com/download' }],
+  'deno-fresh': [{ command: 'deno', versionArgs: ['--version'], label: 'Deno', installHint: 'https://docs.deno.com/runtime/getting_started/installation/' }],
+};
+
+/**
+ * Catches a missing Composer/Ruby+Rails/.NET SDK/Deno right after the
+ * framework is picked, instead of letting it surface as a hard crash deep
+ * inside scaffold.js after every other question has already been answered.
+ * Reuses the exact same "← Back" rewind mechanism every other step's BACK
+ * sentinel already drives — returning 'back' here pops right back to
+ * stepFramework's own history entry, so picking a different framework just
+ * works, no special-case restart logic needed. Skipped entirely outside
+ * interactive mode (--yes): scripts/CI should still fail fast with a clear
+ * message, not stop to ask a question nothing is there to answer.
+ */
+async function stepToolchainPreflight(result, { interactive } = {}) {
+  const requirements = OFFICIAL_TOOLCHAIN_REQUIREMENTS[result.framework];
+  if (!requirements || !interactive) return 'skip';
+
+  for (const { command, versionArgs, label, installHint } of requirements) {
+    const found = await checkToolchain(command, versionArgs);
+    if (found) continue;
+
+    log.error(`${label} was not found on PATH — required to scaffold ${getFrameworkDef(result).title}. Install it first: ${installHint}`);
+    const choice = guardCancel(
+      await select({
+        message: 'What would you like to do?',
+        options: [
+          { value: 'back', label: 'Pick a different framework' },
+          { value: 'exit', label: 'Exit and install it myself' },
+        ],
+      })
+    );
+    if (choice === 'exit') {
+      throw new CancelledError(`Scaffold cancelled — install ${label} first, then re-run.`);
+    }
+    return 'back';
+  }
+  return 'skip';
+}
+
 /** Hidden entirely when the framework forces one (Angular, NestJS, every Python/Java framework). */
 async function stepLanguage(result) {
   const frameworkDef = getFrameworkDef(result);
@@ -523,6 +612,56 @@ async function stepDatabase(result) {
   );
   if (database === BACK) return 'back';
   result.database = database;
+  return 'ok';
+}
+
+/**
+ * Next to Database, same idea: only makes sense where there's a server/
+ * session to hold one. Node-only for now — none of Step 1's Go/PHP/Ruby/
+ * .NET/Deno/Kotlin backends share a common Node auth ecosystem to hook into,
+ * so this is skipped for every runtime other than 'node' the same way
+ * stepExtraPackages already narrows to node/python only.
+ */
+async function stepAuth(result) {
+  if (!supportsAuth(result.projectType) || result.runtime !== 'node') {
+    result.auth = 'none';
+    return 'skip';
+  }
+  if (result.auth) return 'skip';
+
+  const auth = guardCancel(
+    await autocomplete({
+      message: 'Authentication:',
+      options: withBack(toOptions(AUTH_OPTIONS)),
+      placeholder: 'Type to search...',
+    })
+  );
+  if (auth === BACK) return 'back';
+  result.auth = auth;
+  return 'ok';
+}
+
+/**
+ * Broader than Database/Auth above — testing makes sense for a plain
+ * frontend SPA too, so this is shown for Frontend as well as Backend/
+ * Fullstack. Node-only, same reasoning as stepAuth above.
+ */
+async function stepTesting(result) {
+  if (!supportsTesting(result.projectType) || result.runtime !== 'node') {
+    result.testing = 'none';
+    return 'skip';
+  }
+  if (result.testing) return 'skip';
+
+  const testing = guardCancel(
+    await autocomplete({
+      message: 'Testing setup:',
+      options: withBack(toOptions(TESTING_OPTIONS)),
+      placeholder: 'Type to search...',
+    })
+  );
+  if (testing === BACK) return 'back';
+  result.testing = testing;
   return 'ok';
 }
 
@@ -908,9 +1047,12 @@ const STEPS = [
   stepPackageName,
   stepProjectType,
   stepFramework,
+  stepToolchainPreflight,
   stepLanguage,
   stepStyling,
   stepDatabase,
+  stepAuth,
+  stepTesting,
   stepMlLibraries,
   stepSpringBuildTool,
   stepSpringPackaging,
@@ -936,14 +1078,14 @@ const STEPS = [
  * and — since later fields simply didn't exist yet in that snapshot — pick
  * back up from there with everything downstream recomputed fresh.
  */
-export async function getProjectOptions(preset = {}) {
+export async function getProjectOptions(preset = {}, { interactive = true } = {}) {
   const result = { ...preset };
   const history = [];
   let i = 0;
 
   while (i < STEPS.length) {
     const snapshotBefore = { ...result };
-    const outcome = await STEPS[i](result);
+    const outcome = await STEPS[i](result, { interactive });
 
     if (outcome === 'back') {
       const prev = history.pop();

@@ -2,7 +2,9 @@ import path from 'node:path';
 import fs from 'fs-extra';
 import { execa } from 'execa';
 
+import { applyAuth } from './auth.js';
 import { applyDatabase } from './database.js';
+import { applyTesting } from './testing.js';
 import { handleGoBackend } from './backend-go.js';
 import { handleLaravelBackend } from './backend-php.js';
 import { handleRailsBackend } from './backend-ruby.js';
@@ -102,6 +104,17 @@ async function handleFrontend(options, warnings) {
   await applyQuality(options, warnings, {
     eslintHandledInline: options.framework === 'react' && options.quality === 'eslint-prettier',
   });
+
+  // Angular's own `ng test` (Karma/Jasmine, or a newer builder) is already
+  // wired in by the Angular CLI itself — same "don't duplicate what's
+  // already there" call NestJS's own Jest setup gets in handleNestBackend.
+  if (options.framework === 'angular') {
+    if (options.testing && options.testing !== 'none') {
+      warnings.push('Angular already ships its own test runner (`ng test`); nothing further was needed.');
+    }
+  } else {
+    await applyTesting(options, warnings, { environment: 'jsdom', testDir: 'src' });
+  }
 
   if (options.docker) {
     await applyDocker(options, warnings, { flavor: 'static', buildCommand: 'npm run build', port: 8080 });
@@ -262,6 +275,11 @@ async function handleFullstack(options, warnings) {
   // page components and throws VUE_ROUTER_R0004 in the browser console.
   const structureExclude = framework === 'next' || framework === 'nuxt' ? ['pages'] : [];
   await generateEnterpriseStructure(options, warnings, { baseDir: fullstackBaseDir, exclude: structureExclude });
+
+  await applyTesting(options, warnings, { environment: 'jsdom', testDir: fullstackBaseDir });
+  // Real wiring only for Next.js — applyAuth itself pushes a "not yet wired"
+  // warning for Nuxt/SvelteKit/Astro when Auth.js was picked anyway.
+  await applyAuth(options, warnings);
 
   if (options.docker) {
     const nodeStart = { next: 'npm start', nuxt: 'node .output/server/index.mjs', astro: 'node ./dist/server/entry.mjs' };
@@ -450,6 +468,10 @@ async function handleManualBackend(options, warnings, kind) {
     await applyDatabase(options, warnings, { modelsDir: modelsDirFor(options, 'src') });
   }
   await applyQuality(options, warnings);
+  await applyTesting(options, warnings, { environment: 'node', testDir: 'src' });
+  // Real wiring only for Express — applyAuth itself pushes a "not yet wired"
+  // warning for Fastify when Auth.js was picked anyway.
+  await applyAuth(options, warnings);
   if (options.docker) {
     const isTs = options.language === 'ts';
     await applyDocker(options, warnings, {
@@ -480,6 +502,19 @@ async function handleNestBackend(options, warnings) {
     );
   } else {
     warnings.push('NestJS always includes its own ESLint + Prettier config; there is no CLI flag to omit it.');
+  }
+  // `nest new` already ships a full Jest setup (spec files + an e2e/ folder,
+  // jest config in package.json) — same "don't duplicate what's already
+  // there" call Angular's own `ng test` gets in handleFrontend.
+  if (options.testing && options.testing !== 'none') {
+    warnings.push('NestJS already ships its own Jest-based test setup (spec files + e2e/); nothing further was needed.');
+  }
+  // No official Auth.js integration for NestJS yet (its own idiomatic story
+  // is @nestjs/passport) — applyAuth would just repeat this same "not yet
+  // wired" warning itself, so this skips calling it entirely rather than
+  // pushing two warnings for one choice.
+  if (options.auth && options.auth !== 'none') {
+    warnings.push(`${options.auth === 'authjs' ? 'Auth.js' : options.auth} was selected but isn't wired up yet for NestJS in this CLI — install it yourself, or re-run and pick None.`);
   }
   if (options.docker) {
     await applyDocker(options, warnings, {
@@ -512,6 +547,10 @@ async function handleHonoBackend(options, warnings) {
   // exact packages collides with npm's dependency resolution, so only the
   // config-writing half of applyQuality runs for eslint-prettier.
   await applyQuality(options, warnings, { depsAlreadyPresent: true });
+  await applyTesting(options, warnings, { environment: 'node', testDir: hasSrcDir ? 'src' : '.' });
+  // No official Auth.js integration for Hono yet — applyAuth pushes its own
+  // "not yet wired" warning for any framework other than Next.js/Express.
+  await applyAuth(options, warnings);
   if (options.docker) {
     await applyDocker(options, warnings, {
       flavor: 'node',

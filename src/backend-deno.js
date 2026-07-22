@@ -59,14 +59,71 @@ const OAK_DENO_JSON = `{
 }
 `;
 
-const OAK_MAIN_TS = `import { Application, Router } from "@oak/oak";
+/** Plain data shape — no framework-specific trait to differ on (same idea as scaffold.js's Rust/Go models). */
+const OAK_MODELS_TS = `export interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+`;
 
-const router = new Router();
-router.get("/", (ctx) => {
+/**
+ * In-memory on purpose: this step doesn't force a database choice — swap
+ * this for a real database-backed implementation once you've picked one;
+ * nothing in controllers.ts needs to change to do that.
+ */
+const OAK_SERVICES_TS = `import type { User } from "./models.ts";
+
+const users = new Map<number, User>([
+  [1, { id: 1, name: "Ada Lovelace", email: "ada@example.com" }],
+]);
+
+export class UserService {
+  listUsers(): User[] {
+    return Array.from(users.values());
+  }
+}
+`;
+
+const OAK_CONTROLLERS_TS = `import type { Context } from "@oak/oak";
+import { UserService } from "./services.ts";
+
+const userService = new UserService();
+
+export function root(ctx: Context) {
   ctx.response.body = { message: "Hello from Oak!" };
-});
+}
+
+export function listUsers(ctx: Context) {
+  ctx.response.body = userService.listUsers();
+}
+`;
+
+/** A small example of where cross-cutting concerns (auth, rate limiting, request IDs, ...) belong — as their own middleware, registered once in main.ts, instead of copy-pasted into every controller. */
+const OAK_MIDDLEWARE_TS = `import type { Context } from "@oak/oak";
+
+export async function logging(ctx: Context, next: () => Promise<unknown>) {
+  const start = Date.now();
+  await next();
+  const elapsedMs = Date.now() - start;
+  console.log(\`\${ctx.request.method} \${ctx.request.url.pathname} (\${elapsedMs}ms)\`);
+}
+`;
+
+const OAK_ROUTES_TS = `import { Router } from "@oak/oak";
+import { listUsers, root } from "./controllers.ts";
+
+export const router = new Router();
+router.get("/", root);
+router.get("/users", listUsers);
+`;
+
+const OAK_MAIN_TS = `import { Application } from "@oak/oak";
+import { logging } from "./src/middleware.ts";
+import { router } from "./src/routes.ts";
 
 const app = new Application();
+app.use(logging);
 app.use(router.routes());
 app.use(router.allowedMethods());
 
@@ -85,6 +142,11 @@ await app.listen({ port });
  * this runtime, same as Rust/Flutter). A missing Deno here is a soft
  * warning, not a hard failure — the files are still useful once it's
  * installed, unlike Laravel/Rails above.
+ *
+ * main.ts stays thin (wiring only) — routes/controllers/services/models/
+ * middleware are split the same layered way Go's handler gets in
+ * backend-go.js, adapted to Deno/TS. `GET /users` is real and working
+ * end-to-end (controller → service), not a stub.
  */
 export async function handleDenoOakBackend(options, warnings) {
   const { targetDir } = options;
@@ -92,9 +154,14 @@ export async function handleDenoOakBackend(options, warnings) {
 
   await fs.outputFile(path.join(targetDir, 'deno.json'), OAK_DENO_JSON);
   await fs.outputFile(path.join(targetDir, 'main.ts'), OAK_MAIN_TS);
+  await fs.outputFile(path.join(targetDir, 'src', 'routes.ts'), OAK_ROUTES_TS);
+  await fs.outputFile(path.join(targetDir, 'src', 'controllers.ts'), OAK_CONTROLLERS_TS);
+  await fs.outputFile(path.join(targetDir, 'src', 'services.ts'), OAK_SERVICES_TS);
+  await fs.outputFile(path.join(targetDir, 'src', 'models.ts'), OAK_MODELS_TS);
+  await fs.outputFile(path.join(targetDir, 'src', 'middleware.ts'), OAK_MIDDLEWARE_TS);
   await fs.writeFile(path.join(targetDir, '.gitignore'), '.env\n');
 
-  logger.dim('  › Wrote deno.json + main.ts by hand (Oak has no official project scaffolder).');
+  logger.dim('  › Wrote deno.json + main.ts + src/{routes,controllers,services,models,middleware}.ts by hand (Oak has no official project scaffolder).');
 
   const denoFound = await checkToolchain('deno', ['--version']);
   if (!denoFound) {
