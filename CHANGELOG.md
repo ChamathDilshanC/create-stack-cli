@@ -1,3 +1,10 @@
+## [3.8.5](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.4...v3.8.5) (2026-07-22)
+
+
+### Bug Fixes
+
+* Add auth/testing scaffolds and layered backends ([a70d1dd](https://github.com/ChamathDilshanC/create-stack-cli/commit/a70d1dd64bb9217747b7b9ee6950859ae17822b0))
+
 ## [3.8.4](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.3...v3.8.4) (2026-07-22)
 
 
