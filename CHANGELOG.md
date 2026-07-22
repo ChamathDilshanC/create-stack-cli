@@ -1,3 +1,10 @@
+## [3.8.4](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.3...v3.8.4) (2026-07-22)
+
+
+### Bug Fixes
+
+* Add backend scaffolders for 6 new runtimes ([a22c542](https://github.com/ChamathDilshanC/create-stack-cli/commit/a22c542ad2cf3cddcc9d016df943bc099b60794b))
+
 ## [3.8.3](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.2...v3.8.3) (2026-07-21)
 
 
