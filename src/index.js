@@ -252,9 +252,16 @@ function assertNonInteractiveComplete(preset, cli) {
   const isJava = frameworkDef?.runtime === 'java';
   const isRust = frameworkDef?.runtime === 'rust';
   const isDart = frameworkDef?.runtime === 'dart';
+  const isGo = frameworkDef?.runtime === 'go';
+  const isPhp = frameworkDef?.runtime === 'php';
+  const isRuby = frameworkDef?.runtime === 'ruby';
+  const isDotnet = frameworkDef?.runtime === 'dotnet';
+  const isDeno = frameworkDef?.runtime === 'deno';
+  const isKotlin = frameworkDef?.runtime === 'kotlin';
   const isAi = frameworkDef?.value === 'python-ml';
+  const skipsPmQuestion = isPython || isJava || isRust || isDart || isGo || isPhp || isRuby || isDotnet || isDeno || isKotlin;
 
-  const required = ['projectName', 'projectType', 'framework', ...(isPython || isJava || isRust || isDart ? [] : ['pm'])];
+  const required = ['projectName', 'projectType', 'framework', ...(skipsPmQuestion ? [] : ['pm'])];
   const missing = required.filter((key) => preset[key] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -288,6 +295,30 @@ function assertNonInteractiveComplete(preset, cli) {
     preset.pm = 'flutter';
     preset.install = false;
   }
+  if (isGo) {
+    preset.pm = 'go';
+    preset.install = false;
+  }
+  if (isPhp) {
+    preset.pm = 'composer';
+    preset.install = false;
+  }
+  if (isRuby) {
+    preset.pm = 'bundler';
+    preset.install = false;
+  }
+  if (isDotnet) {
+    preset.pm = 'dotnet';
+    preset.install = false;
+  }
+  if (isDeno) {
+    preset.pm = 'deno';
+    preset.install = false;
+  }
+  if (isKotlin) {
+    preset.pm = 'gradle';
+    preset.install = false;
+  }
   if (isAi && preset.mlLibraries === undefined) preset.mlLibraries = [];
 }
 
@@ -314,6 +345,23 @@ async function confirmOverwrite(targetDir, cli) {
 
 /** How to activate the venv, per OS — Windows and POSIX shells use different activation scripts. */
 const VENV_ACTIVATE = process.platform === 'win32' ? '.venv\\Scripts\\activate' : 'source .venv/bin/activate';
+
+/** Runtimes whose dependencies are always resolved by the toolchain itself (a wrapper, a first build/run, or the scaffolder's own install) — mirrors prompts.js's NO_LIVE_INSTALL_STEP_RUNTIMES, just as a Set since printSummary only ever needs membership checks. */
+const NO_LIVE_INSTALL_STEP_RUNTIMES = new Set(['java', 'rust', 'dart', 'go', 'php', 'ruby', 'dotnet', 'deno', 'kotlin']);
+
+/** options.language -> the label printSummary prints; anything absent (i.e. 'js'/undefined) falls back to 'JavaScript' at the call site. */
+const LANGUAGE_LABELS = {
+  ts: 'TypeScript',
+  python: 'Python',
+  java: 'Java',
+  rust: 'Rust',
+  dart: 'Dart',
+  go: 'Go',
+  php: 'PHP',
+  ruby: 'Ruby',
+  csharp: 'C#',
+  kotlin: 'Kotlin',
+};
 
 /** The command that actually starts the dev server, per framework's own convention. */
 function devCommand(options) {
@@ -342,6 +390,47 @@ function devCommand(options) {
     // `pub get`, already done at scaffold time) covers dependency resolution
     // — there's no separate install step forced off in prompts.js.
     return 'flutter run';
+  }
+
+  if (options.runtime === 'go') {
+    // `go run .` fetches nothing on its own (that's `go mod tidy`'s job,
+    // already offered opportunistically in backend-go.js) but it does
+    // compile-and-run in one step, the closest equivalent to `cargo run`.
+    return 'go run .';
+  }
+
+  if (options.runtime === 'php') {
+    // Laravel's own dev server — already installed as part of scaffolding
+    // (backend-php.js's composer create-project), so there's nothing to
+    // resolve first.
+    return 'php artisan serve';
+  }
+
+  if (options.runtime === 'ruby') {
+    // Rails' own binstub — `rails new` already ran bundle install as part
+    // of scaffolding (backend-ruby.js), so there's nothing to resolve first.
+    return 'bin/rails server';
+  }
+
+  if (options.runtime === 'dotnet') {
+    // Restores NuGet packages on its own before running, same as `cargo run`.
+    return 'dotnet run';
+  }
+
+  if (options.runtime === 'deno') {
+    // Fresh's own generated deno.json defines a "start" task (dev mode with
+    // file watching); the hand-written Oak template (backend-deno.js) uses
+    // "dev" instead, to leave "start" free for a future no-watch/prod task.
+    return framework === 'deno-fresh' ? 'deno task start' : 'deno task dev';
+  }
+
+  if (options.runtime === 'kotlin') {
+    // Plain `gradle run` rather than `./gradlew run`: backend-kotlin.js only
+    // generates a wrapper opportunistically (when a system Gradle was found
+    // to bootstrap it from), and that success/failure isn't threaded through
+    // to options here — `gradle run` is the one command that's correct
+    // either way, given Gradle has to be present for this to work at all.
+    return 'gradle run';
   }
 
   if (options.runtime === 'java') {
@@ -392,25 +481,18 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   if (options.runtime === 'python') {
     steps.push(VENV_ACTIVATE);
     if (!installed) steps.push('pip install -r requirements.txt');
-  } else if (options.runtime === 'java' || options.runtime === 'rust' || options.runtime === 'dart') {
-    // Maven/Gradle's own wrapper (Cargo on `cargo run`, Flutter's own `pub get` at scaffold time) resolves dependencies itself — nothing separate to install.
+  } else if (NO_LIVE_INSTALL_STEP_RUNTIMES.has(options.runtime)) {
+    // Maven/Gradle's own wrapper (Cargo on `cargo run`, Flutter's own `pub get`
+    // at scaffold time, Go/dotnet/Kotlin resolving lazily on first build, Deno
+    // caching imports on first run, Laravel/Rails always installing as part
+    // of their own scaffolder) resolves dependencies itself — nothing
+    // separate to install here.
   } else if (!installed) {
     steps.push(`${options.pm} install`);
   }
   steps.push(devCommand(options));
 
-  const languageLabel =
-    options.language === 'ts'
-      ? 'TypeScript'
-      : options.language === 'python'
-        ? 'Python'
-        : options.language === 'java'
-          ? 'Java'
-          : options.language === 'rust'
-            ? 'Rust'
-            : options.language === 'dart'
-              ? 'Dart'
-              : 'JavaScript';
+  const languageLabel = LANGUAGE_LABELS[options.language] ?? 'JavaScript';
 
   const lines = [
     pc.dim(targetDir),

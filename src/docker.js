@@ -81,6 +81,87 @@ EXPOSE ${port}
 CMD ["./${binaryName}"]
 `;
 
+/** Go/Gin/Fiber/Echo flavor: build a static binary, then run it on a bare Alpine base (no runtime needed, just the compiled binary) — same two-stage shape as Rust above. */
+const goDockerfile = ({ binaryName, port }) => `# syntax=docker/dockerfile:1
+FROM golang:1.23-alpine AS build
+WORKDIR /app
+COPY . .
+RUN go mod tidy && go build -o ${binaryName} .
+
+FROM alpine:latest AS runner
+WORKDIR /app
+COPY --from=build /app/${binaryName} ./${binaryName}
+EXPOSE ${port}
+CMD ["./${binaryName}"]
+`;
+
+/** PHP/Laravel flavor: single-stage — Composer itself is grabbed from its own official image rather than a separate build stage, since there's nothing to compile. */
+const phpDockerfile = ({ startCommand, port }) => `# syntax=docker/dockerfile:1
+FROM php:8.3-cli
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends unzip git libzip-dev \\
+    && docker-php-ext-install pdo pdo_mysql zip \\
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY composer.json composer.lock* ./
+RUN composer install --no-dev --no-interaction --prefer-dist
+COPY . .
+EXPOSE ${port}
+CMD ${JSON.stringify(startCommand.split(' '))}
+`;
+
+/** Ruby/Rails flavor: single-stage — build-essential + libsqlite3-dev cover compiling the native gems (sqlite3, etc.) Rails' own default Gemfile pulls in. */
+const rubyDockerfile = ({ startCommand, port }) => `# syntax=docker/dockerfile:1
+FROM ruby:3.3-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libsqlite3-dev git \\
+    && rm -rf /var/lib/apt/lists/*
+COPY Gemfile Gemfile.lock* ./
+RUN bundle install
+COPY . .
+EXPOSE ${port}
+CMD ${JSON.stringify(startCommand.split(' '))}
+`;
+
+/** C#/ASP.NET Core flavor: publish with the full SDK image, then run the published output on the lighter ASP.NET runtime image — same two-stage shape as Java above. */
+const dotnetDockerfile = ({ projectName, port }) => `# syntax=docker/dockerfile:1
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /app
+COPY . .
+RUN dotnet publish -c Release -o /out ${projectName}.csproj
+
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runner
+WORKDIR /app
+COPY --from=build /out .
+EXPOSE ${port}
+ENV ASPNETCORE_URLS=http://+:${port}
+ENTRYPOINT ["dotnet", "${projectName}.dll"]
+`;
+
+/** Deno/Fresh/Oak flavor: Deno needs no separate install step (imports resolve straight from deno.json) — `deno cache` just pre-warms the module cache into this layer; `|| true` keeps a cache miss from failing the whole build. */
+const denoDockerfile = ({ startCommand, port }) => `# syntax=docker/dockerfile:1
+FROM denoland/deno:alpine
+WORKDIR /app
+COPY . .
+RUN deno cache main.ts || true
+EXPOSE ${port}
+CMD ${JSON.stringify(startCommand.split(' '))}
+`;
+
+/** Kotlin/Ktor flavor: build the fat jar with Gradle (via the io.ktor.plugin's own buildFatJar task, always run through the gradle:8-jdk21 image's bundled Gradle — not the project's own ./gradlew, which may not exist if the host had no system Gradle to generate it from), then run it on a slim JRE — same two-stage shape as Java above. */
+const kotlinDockerfile = ({ port }) => `# syntax=docker/dockerfile:1
+FROM gradle:8-jdk21 AS build
+WORKDIR /app
+COPY . .
+RUN gradle buildFatJar --no-daemon
+
+FROM eclipse-temurin:21-jre AS runner
+WORKDIR /app
+COPY --from=build /app/build/libs/*-all.jar app.jar
+EXPOSE ${port}
+CMD ["java", "-jar", "app.jar"]
+`;
+
 const composeTemplate = (serviceName, hostPort, containerPort) => `services:
   app:
     build: .
@@ -91,6 +172,33 @@ const composeTemplate = (serviceName, hostPort, containerPort) => `services:
       - .env
     restart: unless-stopped
 `;
+
+/** One builder per flavor — `nodeDockerfile` (the historical default) is the fallback for an unrecognized/omitted flavor, kept out of this table on purpose so that fallback stays obvious at the call site below. */
+const DOCKERFILE_BUILDERS = {
+  static: staticDockerfile,
+  python: pythonDockerfile,
+  java: javaDockerfile,
+  rust: rustDockerfile,
+  go: goDockerfile,
+  php: phpDockerfile,
+  ruby: rubyDockerfile,
+  dotnet: dotnetDockerfile,
+  deno: denoDockerfile,
+  kotlin: kotlinDockerfile,
+};
+
+/** What each flavor's own build/dependency directories look like — kept out of the Docker build context the same way each ecosystem's own .gitignore keeps them out of git. */
+const DOCKERIGNORE_BY_FLAVOR = {
+  python: '.venv\n__pycache__\n*.pyc\n.git\n',
+  java: 'target\nbuild\n.gradle\n.mvn\nHELP.md\n.git\n',
+  rust: 'target\n.git\n',
+  go: '.git\n*.exe\n',
+  php: 'vendor\nnode_modules\n.git\n',
+  ruby: '.bundle\nlog\ntmp\n.git\n',
+  dotnet: 'bin\nobj\n.git\n',
+  deno: '.git\n',
+  kotlin: 'build\n.gradle\n.git\n',
+};
 
 /**
  * Writes a basic Dockerfile + docker-compose.yml + .dockerignore.
@@ -103,35 +211,24 @@ const composeTemplate = (serviceName, hostPort, containerPort) => `services:
 export async function applyDocker(
   options,
   warnings,
-  { flavor, buildCommand, startCommand, port, buildTool, javaVersion, binaryName }
+  { flavor, buildCommand, startCommand, port, buildTool, javaVersion, binaryName, projectName }
 ) {
   const spinner = createSpinner('Generating Docker files...');
   try {
     const containerPort = flavor === 'static' ? 80 : port;
-    const dockerfile =
-      flavor === 'static'
-        ? staticDockerfile({ buildCommand })
-        : flavor === 'python'
-          ? pythonDockerfile({ startCommand, port })
-          : flavor === 'java'
-            ? javaDockerfile({ buildTool, javaVersion, port })
-            : flavor === 'rust'
-              ? rustDockerfile({ binaryName, port })
-              : nodeDockerfile({ buildCommand, startCommand, port });
+    // Every builder destructures only the params it needs from one shared
+    // object — passing all of them through unconditionally is harmless, and
+    // keeps this a flat lookup instead of a ternary chain that gets harder
+    // to scan with every new flavor.
+    const buildDockerfile = DOCKERFILE_BUILDERS[flavor] ?? nodeDockerfile;
+    const dockerfile = buildDockerfile({ buildCommand, startCommand, port, buildTool, javaVersion, binaryName, projectName });
 
     await fs.writeFile(path.join(options.targetDir, 'Dockerfile'), dockerfile);
     await fs.writeFile(
       path.join(options.targetDir, 'docker-compose.yml'),
       composeTemplate(options.packageName, port, containerPort)
     );
-    const dockerignore =
-      flavor === 'python'
-        ? '.venv\n__pycache__\n*.pyc\n.git\n'
-        : flavor === 'java'
-          ? 'target\nbuild\n.gradle\n.mvn\nHELP.md\n.git\n'
-          : flavor === 'rust'
-            ? 'target\n.git\n'
-            : 'node_modules\ndist\nbuild\n.git\n';
+    const dockerignore = DOCKERIGNORE_BY_FLAVOR[flavor] ?? 'node_modules\ndist\nbuild\n.git\n';
     await fs.writeFile(path.join(options.targetDir, '.dockerignore'), dockerignore);
 
     // docker-compose's `env_file: .env` needs a real file to exist, but not

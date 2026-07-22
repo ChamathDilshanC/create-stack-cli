@@ -49,6 +49,34 @@ const FLUTTER_NOTE =
   '# Flutter does not read .env files natively — add the flutter_dotenv package\n' +
   '# and call dotenv.load() in main(), or pass values via --dart-define instead.\n';
 
+/** Plain Go binaries don't read .env files natively either — these still get written for consistency, same as the notes above. Laravel (PHP) is the one new backend that needs no such note — it reads .env natively already. */
+const GO_NOTE =
+  '# Plain Go binaries do not read .env files natively — add a package like\n' +
+  '# github.com/joho/godotenv and call godotenv.Load() at the start of main()\n' +
+  '# to load these, or export them into the environment yourself.\n';
+
+/** Rails reads credentials/config differently from plain .env — these still get written for consistency, same as the notes above. */
+const RUBY_NOTE =
+  '# Rails does not read .env files natively without the dotenv-rails gem —\n' +
+  '# add it to your Gemfile (group :development, :test) to load these, or\n' +
+  '# export them into the environment yourself for production.\n';
+
+/** ASP.NET Core reads appsettings.json + real environment variables, not .env files — these still get written for consistency, same as the notes above. */
+const DOTNET_NOTE =
+  '# ASP.NET Core does not read .env files natively — these map to real\n' +
+  '# configuration keys (e.g. ASPNETCORE_ENVIRONMENT) if you export them into\n' +
+  '# the environment yourself, or add a package like DotNetEnv.\n';
+
+/** Deno needs an explicit flag (or a std module) to read .env files — these still get written for consistency, same as the notes above. */
+const DENO_NOTE =
+  '# Deno does not load .env files automatically — pass --env-file=.env to\n' +
+  '# "deno run"/"deno task" (Deno 1.42+), or use the std @std/dotenv module.\n';
+
+/** Ktor reads its own application.conf, not .env files — these still get written for consistency, same as the notes above. */
+const KOTLIN_NOTE =
+  '# Ktor reads its own application.conf, not .env files — export these into\n' +
+  '# the environment yourself, or add a library like cdimascio/java-dotenv.\n';
+
 /** Each Python backend's own default dev port — Django/FastAPI both default to 8000, Flask to 5000. */
 const PYTHON_PORT = { django: '8000', flask: '5000', fastapi: '8000' };
 
@@ -63,6 +91,24 @@ function baseVars(options) {
   }
   if (projectType === 'backend' && runtime === 'rust') {
     return { PORT: '3000', RUST_LOG: 'debug' };
+  }
+  if (projectType === 'backend' && runtime === 'go') {
+    return { PORT: '8080', APP_ENV: 'development' };
+  }
+  if (projectType === 'backend' && runtime === 'php') {
+    return { PORT: '8000', APP_ENV: 'development' };
+  }
+  if (projectType === 'backend' && runtime === 'ruby') {
+    return { PORT: '3000', RAILS_ENV: 'development' };
+  }
+  if (projectType === 'backend' && runtime === 'dotnet') {
+    return { PORT: '5000', ASPNETCORE_ENVIRONMENT: 'Development' };
+  }
+  if (projectType === 'backend' && runtime === 'deno') {
+    return { PORT: '8000', DENO_ENV: 'development' };
+  }
+  if (projectType === 'backend' && runtime === 'kotlin') {
+    return { PORT: '8080', KTOR_ENV: 'development' };
   }
   if (projectType === 'backend') {
     return { PORT: '3000', NODE_ENV: 'development' };
@@ -93,6 +139,24 @@ function productionVars(options) {
   if (projectType === 'backend' && runtime === 'rust') {
     return { PORT: '3000', RUST_LOG: 'warn' };
   }
+  if (projectType === 'backend' && runtime === 'go') {
+    return { PORT: '8080', APP_ENV: 'production' };
+  }
+  if (projectType === 'backend' && runtime === 'php') {
+    return { PORT: '8000', APP_ENV: 'production' };
+  }
+  if (projectType === 'backend' && runtime === 'ruby') {
+    return { PORT: '3000', RAILS_ENV: 'production' };
+  }
+  if (projectType === 'backend' && runtime === 'dotnet') {
+    return { PORT: '5000', ASPNETCORE_ENVIRONMENT: 'Production' };
+  }
+  if (projectType === 'backend' && runtime === 'deno') {
+    return { PORT: '8000', DENO_ENV: 'production' };
+  }
+  if (projectType === 'backend' && runtime === 'kotlin') {
+    return { PORT: '8080', KTOR_ENV: 'production' };
+  }
   if (projectType === 'backend') {
     return { PORT: '3000', NODE_ENV: 'production' };
   }
@@ -106,6 +170,24 @@ function productionVars(options) {
   const prefix = PUBLIC_PREFIX[framework] ?? '';
   return { [`${prefix}API_URL`]: 'https://api.example.com' };
 }
+
+/** Framework-specific notes take priority over the runtime-level ones below (Angular/React Native are both `runtime: 'node'`, so they'd otherwise fall through to no note at all). */
+const ENV_NOTE_BY_FRAMEWORK = {
+  angular: ANGULAR_NOTE,
+  'react-native': REACT_NATIVE_NOTE,
+};
+
+/** Laravel (PHP) is the one new backend that needs no entry here — it reads .env natively already, unlike the rest. */
+const ENV_NOTE_BY_RUNTIME = {
+  java: JAVA_NOTE,
+  rust: RUST_NOTE,
+  dart: FLUTTER_NOTE,
+  go: GO_NOTE,
+  ruby: RUBY_NOTE,
+  dotnet: DOTNET_NOTE,
+  deno: DENO_NOTE,
+  kotlin: KOTLIN_NOTE,
+};
 
 function serialize(vars) {
   return Object.entries(vars)
@@ -155,18 +237,7 @@ export async function applyEnvFiles(options, warnings) {
   const spinner = createSpinner('Generating environment files...');
   try {
     const { targetDir, framework, runtime } = options;
-    const header =
-      framework === 'angular'
-        ? ANGULAR_NOTE
-        : framework === 'react-native'
-          ? REACT_NATIVE_NOTE
-          : runtime === 'java'
-            ? JAVA_NOTE
-            : runtime === 'rust'
-              ? RUST_NOTE
-              : runtime === 'dart'
-                ? FLUTTER_NOTE
-                : '';
+    const header = ENV_NOTE_BY_FRAMEWORK[framework] ?? ENV_NOTE_BY_RUNTIME[runtime] ?? '';
 
     await mergeEnvFile(path.join(targetDir, '.env'), baseVars(options), { header });
     await mergeEnvFile(path.join(targetDir, '.env.local'), {}, { header });

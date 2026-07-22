@@ -122,6 +122,89 @@ export const FRAMEWORKS = {
       forceLanguage: 'rust',
       forceDatabase: 'none',
     },
+    // Go's own ecosystem: no ts/js split, no npm-family package manager (Go
+    // modules instead), and none of Gin/Fiber/Echo has an official project-
+    // scaffolding CLI — hand-written in backend-go.js the same way
+    // Express/Fastify/Axum/Actix-web are above. forceDatabase 'none' is the
+    // same "descope for this step" call already made for Rust/Spring.
+    { value: 'go-gin', title: 'Gin (Go)', scaffolder: 'go', runtime: 'go', forceLanguage: 'go', forceDatabase: 'none' },
+    { value: 'go-fiber', title: 'Fiber (Go)', scaffolder: 'go', runtime: 'go', forceLanguage: 'go', forceDatabase: 'none' },
+    { value: 'go-echo', title: 'Echo (Go)', scaffolder: 'go', runtime: 'go', forceLanguage: 'go', forceDatabase: 'none' },
+    // Laravel: a real official scaffolder (composer create-project
+    // laravel/laravel, in backend-php.js), unlike the hand-written Go
+    // frameworks above. Ships its own Eloquent ORM (SQLite configured by
+    // default) — forceDatabase here is purely informational, the same trick
+    // Django's forceDatabase already uses, since there's no separate ORM
+    // question left to ask.
+    {
+      value: 'laravel',
+      title: 'Laravel (PHP)',
+      scaffolder: 'laravel',
+      runtime: 'php',
+      forceLanguage: 'php',
+      forceDatabase: 'laravel-eloquent',
+    },
+    // Rails: another real official scaffolder (rails new, in
+    // backend-ruby.js) — same "own ORM already wired in" story as Laravel
+    // above (ActiveRecord + SQLite).
+    {
+      value: 'rails',
+      title: 'Ruby on Rails (Ruby)',
+      scaffolder: 'rails',
+      runtime: 'ruby',
+      forceLanguage: 'ruby',
+      forceDatabase: 'rails-activerecord',
+    },
+    // ASP.NET Core: `dotnet new webapi` is the .NET SDK's own official
+    // template (backend-dotnet.js). No ORM question yet (EF Core is a
+    // follow-up) — forceDatabase 'none' mirrors Rust/Spring/Go above rather
+    // than Laravel/Rails.
+    {
+      value: 'dotnet',
+      title: 'ASP.NET Core (C#)',
+      scaffolder: 'dotnet',
+      runtime: 'dotnet',
+      forceLanguage: 'csharp',
+      forceDatabase: 'none',
+    },
+    // Deno's own ecosystem: deno.json instead of package.json, no npm-family
+    // package manager, imports resolved (and cached) straight from JSR/npm
+    // specifiers on first run — no separate install step, same story as
+    // Rust/Cargo. Both forced to TypeScript: Fresh is TS-first, and keeping
+    // Oak's hand-written template to one language variant (rather than a
+    // ts/js split like Express) keeps this step's scope tighter.
+    {
+      value: 'deno-fresh',
+      title: 'Fresh (Deno)',
+      scaffolder: 'deno-fresh',
+      runtime: 'deno',
+      forceLanguage: 'ts',
+      forceDatabase: 'none',
+    },
+    // Oak has no official project-scaffolding CLI (a middleware framework,
+    // like Express) — hand-written in backend-deno.js the same way
+    // Express/Fastify/Go are above.
+    {
+      value: 'deno-oak',
+      title: 'Oak (Deno)',
+      scaffolder: 'deno-oak',
+      runtime: 'deno',
+      forceLanguage: 'ts',
+      forceDatabase: 'none',
+    },
+    // Ktor: unlike Spring Boot's start.spring.io, start.ktor.io has no
+    // documented public generator API this CLI could safely integrate with —
+    // so this is hand-written in backend-kotlin.js (a Gradle Kotlin DSL
+    // project), the same exception already made for Axum/Actix-web/Go/Oak
+    // above, rather than a live catalog like Spring's.
+    {
+      value: 'ktor',
+      title: 'Ktor (Kotlin)',
+      scaffolder: 'ktor',
+      runtime: 'kotlin',
+      forceLanguage: 'kotlin',
+      forceDatabase: 'none',
+    },
   ],
   desktop: [
     { value: 'electron', title: 'Electron', scaffolder: 'electron' },
@@ -598,10 +681,15 @@ async function stepSpringHotReload(result) {
  * toolchain, so there's no separate tool to choose between. Flutter's
  * `flutter create` already wires up `analysis_options.yaml` + the
  * `flutter_lints` package (its own `flutter analyze`/`dart format`), so it
- * skips this the same way.
+ * skips this the same way. Go/PHP/Ruby/.NET/Deno/Kotlin skip it too, for
+ * this step — each already has its own strong built-in/idiomatic tooling
+ * (gofmt+vet, Laravel Pint, RuboCop convention, `dotnet format`, `deno fmt`+
+ * `deno lint`, ktlint) that a later step can wire up individually.
  */
+const QUALITY_SKIPPED_RUNTIMES = ['java', 'rust', 'dart', 'go', 'php', 'ruby', 'dotnet', 'deno', 'kotlin'];
+
 async function stepQuality(result) {
-  if (result.runtime === 'java' || result.runtime === 'rust' || result.runtime === 'dart') {
+  if (QUALITY_SKIPPED_RUNTIMES.includes(result.runtime)) {
     result.quality = 'none';
     return 'skip';
   }
@@ -708,7 +796,17 @@ async function stepDocker(result) {
   return 'ok';
 }
 
-/** Python has no npm-family equivalent (pip in a venv, unconditionally); Java uses whichever build tool was already chosen above; Rust always uses Cargo; Flutter's own `flutter create` resolves pub packages itself — none of the four has anything left to ask here. */
+/**
+ * Python has no npm-family equivalent (pip in a venv, unconditionally); Java
+ * uses whichever build tool was already chosen above; Rust always uses
+ * Cargo; Flutter's own `flutter create` resolves pub packages itself — none
+ * of those four has anything left to ask here. Go/PHP/Ruby/.NET/Deno/Kotlin
+ * each have exactly one real package manager for their ecosystem too (Go
+ * modules, Composer, Bundler, NuGet via the dotnet CLI, Deno's own
+ * import-map resolution, Gradle), so none of them has a question to ask
+ * either — `result.pm` here is purely informational (used by printSummary's
+ * "next steps" and nowhere else for these runtimes).
+ */
 async function stepPackageManager(result) {
   if (result.runtime === 'python') {
     result.pm = 'pip';
@@ -724,6 +822,30 @@ async function stepPackageManager(result) {
   }
   if (result.runtime === 'dart') {
     result.pm = 'flutter';
+    return 'skip';
+  }
+  if (result.runtime === 'go') {
+    result.pm = 'go';
+    return 'skip';
+  }
+  if (result.runtime === 'php') {
+    result.pm = 'composer';
+    return 'skip';
+  }
+  if (result.runtime === 'ruby') {
+    result.pm = 'bundler';
+    return 'skip';
+  }
+  if (result.runtime === 'dotnet') {
+    result.pm = 'dotnet';
+    return 'skip';
+  }
+  if (result.runtime === 'deno') {
+    result.pm = 'deno';
+    return 'skip';
+  }
+  if (result.runtime === 'kotlin') {
+    result.pm = 'gradle';
     return 'skip';
   }
   if (result.pm) return 'skip';
@@ -745,9 +867,23 @@ async function stepPackageManager(result) {
   return 'ok';
 }
 
-/** Maven/Gradle's own wrapper resolves dependencies itself on first build, so does Cargo on first `cargo run`, and `flutter create` already runs `flutter pub get` as part of scaffolding — none of the three has a separate "install" step to offer. */
+/**
+ * Maven/Gradle's own wrapper resolves dependencies itself on first build, so
+ * does Cargo on first `cargo run`, and `flutter create` already runs
+ * `flutter pub get` as part of scaffolding — none of the three has a
+ * separate "install" step to offer. Go and .NET resolve the same lazy way
+ * (`go build`/`dotnet build`); Deno resolves and caches its JSR/npm imports
+ * on first run; Kotlin/Ktor's hand-written Gradle project resolves the same
+ * way Java's does. Laravel and Rails are different: `composer
+ * create-project`/`rails new` always install as part of scaffolding itself
+ * (same as Tauri/Electron already do) — forcing this off here just means
+ * "don't ask a question whose answer the tool ignores anyway"; their own
+ * handlers push a warning if the user's real preference was actually "no".
+ */
+const NO_LIVE_INSTALL_STEP_RUNTIMES = ['java', 'rust', 'dart', 'go', 'php', 'ruby', 'dotnet', 'deno', 'kotlin'];
+
 async function stepInstall(result) {
-  if (result.runtime === 'java' || result.runtime === 'rust' || result.runtime === 'dart') {
+  if (NO_LIVE_INSTALL_STEP_RUNTIMES.includes(result.runtime)) {
     result.install = false;
     return 'skip';
   }

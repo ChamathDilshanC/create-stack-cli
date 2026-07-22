@@ -3,6 +3,12 @@ import fs from 'fs-extra';
 import { execa } from 'execa';
 
 import { applyDatabase } from './database.js';
+import { handleGoBackend } from './backend-go.js';
+import { handleLaravelBackend } from './backend-php.js';
+import { handleRailsBackend } from './backend-ruby.js';
+import { handleDotnetBackend } from './backend-dotnet.js';
+import { handleDenoFreshBackend, handleDenoOakBackend } from './backend-deno.js';
+import { handleKtorBackend } from './backend-kotlin.js';
 import { applyDocker } from './docker.js';
 import { appendEnvVars, applyEnvFiles } from './env.js';
 import { applyExtraPackages } from './packages.js';
@@ -426,6 +432,13 @@ async function handleBackend(options, warnings) {
   if (framework === 'fastapi') return handleManualPythonBackend(options, warnings, 'fastapi');
   if (framework === 'spring') return handleSpringBackend(options, warnings);
   if (framework === 'rust-axum' || framework === 'rust-actix') return handleRustBackend(options, warnings);
+  if (framework === 'go-gin' || framework === 'go-fiber' || framework === 'go-echo') return handleGoBackend(options, warnings);
+  if (framework === 'laravel') return handleLaravelBackend(options, warnings);
+  if (framework === 'rails') return handleRailsBackend(options, warnings);
+  if (framework === 'dotnet') return handleDotnetBackend(options, warnings);
+  if (framework === 'deno-fresh') return handleDenoFreshBackend(options, warnings);
+  if (framework === 'deno-oak') return handleDenoOakBackend(options, warnings);
+  if (framework === 'ktor') return handleKtorBackend(options, warnings);
 
   throw new Error(`Unknown backend framework: ${framework}`);
 }
