@@ -1,3 +1,10 @@
+## [3.8.6](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.5...v3.8.6) (2026-07-23)
+
+
+### Bug Fixes
+
+* Add presets, automations, and new scaffolds ([8882882](https://github.com/ChamathDilshanC/create-stack-cli/commit/88828826af0ae5e8e4094e35b7146128cd717731))
+
 ## [3.8.5](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.4...v3.8.5) (2026-07-22)
 
 
