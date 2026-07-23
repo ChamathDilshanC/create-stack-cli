@@ -110,6 +110,7 @@ function printWideBanner(pkg, columns) {
   const tips = [
     ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile/AI-ML'],
     ['--type backend -f nestjs', 'preselect your stack'],
+    ['--preset saas', 'skip the wizard — saas/blog/api/mobile-app'],
     ['--help', 'see every option'],
   ];
   const cmdWidth = Math.max(...tips.map(([cmd]) => cmd.length));
@@ -164,6 +165,7 @@ function printCompactBanner(pkg, columns) {
   const tips = [
     ['create-stack my-app', 'pick from Frontend/Fullstack/Backend/Desktop/Mobile/AI-ML'],
     ['--type backend -f nestjs', 'preselect your stack'],
+    ['--preset saas', 'skip the wizard — saas/blog/api/mobile-app'],
     ['--help', 'see every option'],
   ];
   const cmdWidth = Math.max(...tips.map(([cmd]) => cmd.length));

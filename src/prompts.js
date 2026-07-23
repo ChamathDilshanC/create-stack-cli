@@ -3,6 +3,7 @@ import pc from 'picocolors';
 import { autocomplete, autocompleteMultiselect, groupMultiselect, log, multiselect, select, text } from '@clack/prompts';
 import { hex } from './color.js';
 import { pypiPackageExists, searchNpmPackages } from './packages.js';
+import { applyPresetDefaults, PRESETS, resolvePresetByName } from './presets.js';
 import { checkToolchain } from './runtime-check.js';
 import { getSpringChoices } from './spring.js';
 import {
@@ -462,6 +463,17 @@ export const supportsUiLayer = (projectType) => projectType === 'frontend' || pr
 /** Sentinel a select-style step resolves to when the user picks "← Back" instead of answering. */
 const BACK = Symbol('back');
 
+/** Sentinel stepProjectType resolves to when the user picks the "Use a preset" shortcut instead of a project type. */
+const USE_PRESET = Symbol('use-preset');
+
+/** Per-preset one-liner shown next to its name in the "Which preset?" picker — mirrors the stack each one bundles in presets.js. */
+const PRESET_HINTS = {
+  saas: 'Next.js, Tailwind, Prisma, Auth.js, Vitest, Docker',
+  blog: 'Astro, Tailwind, Vitest',
+  api: 'Express, Prisma, Vitest, Docker',
+  'mobile-app': 'Expo, NativeWind',
+};
+
 /** Appends a "← Back" choice to a list of clack `{ value, label }` options. Always last, so existing `initialValue`s stay valid. */
 function withBack(options) {
   return [...options, { value: BACK, label: pc.dim('← Back') }];
@@ -535,22 +547,51 @@ async function stepPackageName(result) {
  */
 async function stepProjectType(result) {
   if (result.projectType) return 'skip';
-  const projectType = guardCancel(
-    await autocomplete({
-      message: 'What are you building?',
-      options: withBack(
-        PROJECT_TYPES.map((t) => ({
-          value: t.value,
-          label: t.color(t.title),
-          hint: FRAMEWORKS[t.value].map((f) => f.title).join(', '),
-        }))
-      ),
-      placeholder: 'Type to search...',
-    })
-  );
-  if (projectType === BACK) return 'back';
-  result.projectType = projectType;
-  return 'ok';
+
+  // Loops rather than returning straight through: backing out of "Which
+  // preset?" should redisplay this menu, not propagate 'back' past it to
+  // whatever step came before.
+  while (true) {
+    const projectType = guardCancel(
+      await autocomplete({
+        message: 'What are you building?',
+        options: withBack([
+          {
+            value: USE_PRESET,
+            label: pc.bold('⚡ Use a preset'),
+            hint: Object.keys(PRESETS).join(', '),
+          },
+          ...PROJECT_TYPES.map((t) => ({
+            value: t.value,
+            label: t.color(t.title),
+            hint: FRAMEWORKS[t.value].map((f) => f.title).join(', '),
+          })),
+        ]),
+        placeholder: 'Type to search...',
+      })
+    );
+    if (projectType === BACK) return 'back';
+
+    if (projectType === USE_PRESET) {
+      const presetName = guardCancel(
+        await autocomplete({
+          message: 'Which preset?',
+          options: withBack(
+            Object.keys(PRESETS).map((name) => ({ value: name, label: name, hint: PRESET_HINTS[name] }))
+          ),
+          placeholder: 'Type to search...',
+        })
+      );
+      if (presetName === BACK) continue;
+
+      Object.assign(result, resolvePresetByName(presetName));
+      applyPresetDefaults(result);
+      return 'ok';
+    }
+
+    result.projectType = projectType;
+    return 'ok';
+  }
 }
 
 /** Skipped when the category only has one option (Mobile) — nothing to choose. */
