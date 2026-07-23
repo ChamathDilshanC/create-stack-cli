@@ -2,21 +2,29 @@ import path from 'node:path';
 import fs from 'fs-extra';
 import { execa } from 'execa';
 
+import { applyApiLayer } from './api-layer.js';
 import { applyAuth } from './auth.js';
 import { applyDatabase } from './database.js';
 import { applyTesting } from './testing.js';
+import { applyStateManagement } from './state-management.js';
+import { applyUiKit } from './ui-kits.js';
+import { handleAiNextjs } from './ai-nextjs.js';
 import { handleGoBackend } from './backend-go.js';
 import { handleLaravelBackend } from './backend-php.js';
 import { handleRailsBackend } from './backend-ruby.js';
 import { handleDotnetBackend } from './backend-dotnet.js';
 import { handleDenoFreshBackend, handleDenoOakBackend } from './backend-deno.js';
 import { handleKtorBackend } from './backend-kotlin.js';
+import { handleWailsDesktop } from './desktop-wails.js';
+import { handleNeutralinoDesktop } from './desktop-neutralino.js';
+import { handleIonicMobile } from './mobile-ionic.js';
+import { handleKmpMobile } from './mobile-kmp.js';
 import { applyDocker } from './docker.js';
 import { appendEnvVars, applyEnvFiles } from './env.js';
 import { applyExtraPackages } from './packages.js';
 import { applyQuality } from './quality.js';
 import { createVenv, pipInstallOrRecord, venvBinPath } from './python-utils.js';
-import { normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
+import { finalizeNextProviders, normalizePackageJson, runScaffolder, scaffolderInvocation } from './scaffold-utils.js';
 import { generateSpringStructure, scaffoldSpringProject } from './spring.js';
 import { FLUTTER_DIRECTORIES, generateEnterpriseStructure, modelsDirFor } from './structure.js';
 import { applyStyling } from './styling.js';
@@ -100,6 +108,15 @@ async function handleFrontend(options, warnings) {
 
   await normalizePackageJson(options);
   await applyStyling(options, warnings);
+  // UI kit before state management/API layer: shadcn/DaisyUI both need the
+  // Tailwind stylesheet applyStyling above just wrote. None of these three
+  // providers reads another's context, so the nesting order among them
+  // otherwise doesn't matter — each just wraps one layer deeper around
+  // whatever the previous one already wrapped (see wrapViteReactRoot/
+  // registerNextProvider in scaffold-utils.js).
+  await applyUiKit(options, warnings);
+  await applyStateManagement(options, warnings);
+  await applyApiLayer(options, warnings);
   await generateEnterpriseStructure(options, warnings, { baseDir: 'src' });
   await applyQuality(options, warnings, {
     eslintHandledInline: options.framework === 'react' && options.quality === 'eslint-prettier',
@@ -125,7 +142,7 @@ async function handleFrontend(options, warnings) {
 /* Fullstack                                                           */
 /* ------------------------------------------------------------------ */
 
-async function runNextCreate(options) {
+export async function runNextCreate(options) {
   const { pm, language, styling, quality, install, targetDir } = options;
   const { cwd, dirArg } = await scaffolderInvocation(targetDir);
 
@@ -243,6 +260,17 @@ async function handleFullstack(options, warnings) {
     await applyStyling(options, warnings);
   }
 
+  // Same three, same order, as handleFrontend above. UI kit's and state
+  // management's own prompts (stepUiKit/stepStateManagement) already narrow
+  // their offered choices per framework, so there's nothing left to
+  // gracefully degrade for either here. API layer is the one exception — it
+  // offers its full menu regardless of framework, so Nuxt/SvelteKit/Astro
+  // can still get the same "not yet wired" warning the rest of this file
+  // already gives Auth.js when tRPC/GraphQL is picked anyway.
+  await applyUiKit(options, warnings);
+  await applyStateManagement(options, warnings);
+  await applyApiLayer(options, warnings);
+
   const hasSrcDir = await fs.pathExists(path.join(options.targetDir, 'src'));
   const modelsDir = hasSrcDir ? path.join('src', modelsDirNameOnly(options)) : modelsDirNameOnly(options);
   const drizzleHandledInline = framework === 'sveltekit' && options.database === 'drizzle';
@@ -289,6 +317,13 @@ async function handleFullstack(options, warnings) {
       startCommand: nodeStart[framework] ?? 'npm start',
       port: 3000,
     });
+  }
+
+  // Once, after everything above has had a chance to call
+  // registerNextProvider() (state management, API layer, UI kit) — a single
+  // "wire this into layout.tsx" instruction instead of one per feature.
+  if (framework === 'next') {
+    await finalizeNextProviders(options.targetDir, options.language === 'ts', warnings);
   }
 }
 
@@ -376,14 +411,25 @@ async function runManualBackendScaffold(options, kind) {
       }
     : {};
 
+  // `--watch`/`tsx watch` restart on every save; dropping it for a "No"
+  // answer to the hot-reload question (prompts.js's stepHotReload) still
+  // leaves a working dev script, just without the auto-restart.
+  const devScript = isTs
+    ? options.hotReload
+      ? 'tsx watch src/server.ts'
+      : 'tsx src/server.ts'
+    : options.hotReload
+      ? 'node --watch src/server.js'
+      : 'node src/server.js';
+
   const pkg = {
     name: packageName,
     version: '0.0.0',
     private: true,
     type: 'module',
     scripts: isTs
-      ? { dev: 'tsx watch src/server.ts', build: 'tsc', start: 'node dist/server.js' }
-      : { dev: 'node --watch src/server.js', start: 'node src/server.js' },
+      ? { dev: devScript, build: 'tsc', start: 'node dist/server.js' }
+      : { dev: devScript, start: 'node src/server.js' },
     dependencies,
     devDependencies,
   };
@@ -516,6 +562,12 @@ async function handleNestBackend(options, warnings) {
   if (options.auth && options.auth !== 'none') {
     warnings.push(`${options.auth === 'authjs' ? 'Auth.js' : options.auth} was selected but isn't wired up yet for NestJS in this CLI — install it yourself, or re-run and pick None.`);
   }
+  // `nest new` always ships `start:dev` running `nest start --watch` — same
+  // "no CLI flag to opt out" story as ESLint/Jest above, so a "No" to the
+  // hot-reload question can't be honored here yet either.
+  if (options.hotReload === false) {
+    warnings.push('NestJS always ships hot-reload via `npm run start:dev` (nest start --watch); there is no flag to omit it yet — use `npm run start` instead if you don\'t want it.');
+  }
   if (options.docker) {
     await applyDocker(options, warnings, {
       flavor: 'node',
@@ -551,6 +603,11 @@ async function handleHonoBackend(options, warnings) {
   // No official Auth.js integration for Hono yet — applyAuth pushes its own
   // "not yet wired" warning for any framework other than Next.js/Express.
   await applyAuth(options, warnings);
+  // create-hono's "nodejs" template always ships `dev: tsx watch src/index.ts`
+  // — same "no flag to opt out" story as NestJS above.
+  if (options.hotReload === false) {
+    warnings.push('Hono\'s create-hono template always ships hot-reload via `npm run dev` (tsx watch); there is no flag to omit it yet — edit package.json\'s "dev" script if you don\'t want it.');
+  }
   if (options.docker) {
     await applyDocker(options, warnings, {
       flavor: 'node',
@@ -630,7 +687,8 @@ async def root():
     return {"message": "Hello from FastAPI!"}
 `;
 
-const FLASK_MAIN = `from flask import Flask, jsonify
+/** `debug=True` is what actually enables Werkzeug's auto-reloader — a "No" answer to the hot-reload question (prompts.js's stepHotReload) turns it off at the source instead of just changing how the server happens to be started. */
+const flaskMain = (hotReload) => `from flask import Flask, jsonify
 
 app = Flask(__name__)
 
@@ -641,7 +699,7 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=${hotReload ? 'True' : 'False'}, host="0.0.0.0", port=5000)
 `;
 
 /**
@@ -654,13 +712,20 @@ async function handleManualPythonBackend(options, warnings, kind) {
   const { targetDir } = options;
   await fs.ensureDir(targetDir);
 
-  await fs.outputFile(path.join(targetDir, 'app', 'main.py'), kind === 'flask' ? FLASK_MAIN : FASTAPI_MAIN);
+  await fs.outputFile(path.join(targetDir, 'app', 'main.py'), kind === 'flask' ? flaskMain(options.hotReload) : FASTAPI_MAIN);
   await fs.outputFile(path.join(targetDir, 'app', '__init__.py'), '');
   await fs.writeFile(path.join(targetDir, '.gitignore'), '.venv/\n__pycache__/\n*.pyc\n.env\n');
 
   const venvReady = await createVenv(targetDir, warnings);
   const packages = kind === 'flask' ? ['flask'] : ['fastapi[standard]'];
   await pipInstallOrRecord({ options, warnings, packages, label: kind === 'flask' ? 'Flask' : 'FastAPI', venvReady });
+
+  // Werkzeug's reloader (already on via flaskMain's debug=True above) auto-
+  // upgrades from stat-polling to watchdog's OS-native file events the
+  // moment watchdog is importable — nothing else to configure for it.
+  if (kind === 'flask' && options.hotReload) {
+    await pipInstallOrRecord({ options, warnings, packages: ['watchdog'], label: 'watchdog', venvReady });
+  }
 
   await generateEnterpriseStructure(options, warnings, { baseDir: 'app' });
   if (options.database === 'sqlalchemy') {
@@ -999,7 +1064,7 @@ if __name__ == "__main__":
  * writes a minimal main.py by hand, the same exception already made for
  * Express/Fastify/Flask/FastAPI/Axum.
  */
-async function handleAI(options, warnings) {
+async function handlePythonMl(options, warnings) {
   const { targetDir, mlLibraries = [] } = options;
   await fs.ensureDir(targetDir);
 
@@ -1016,6 +1081,11 @@ async function handleAI(options, warnings) {
   if (options.docker) {
     await applyDocker(options, warnings, { flavor: 'python', startCommand: 'python main.py', port: 8000 });
   }
+}
+
+async function handleAI(options, warnings) {
+  if (options.framework === 'ai-nextjs') return handleAiNextjs(options, warnings);
+  return handlePythonMl(options, warnings);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1063,6 +1133,9 @@ async function runElectronCreate(options) {
 
 async function handleDesktop(options, warnings) {
   const { framework } = options;
+
+  if (framework === 'wails') return handleWailsDesktop(options, warnings);
+  if (framework === 'neutralino') return handleNeutralinoDesktop(options, warnings);
 
   if (framework === 'tauri') await runTauriCreate(options);
   else await runElectronCreate(options);
@@ -1304,6 +1377,8 @@ async function handleFlutterMobile(options, warnings) {
 async function handleMobile(options, warnings) {
   if (options.framework === 'flutter') return handleFlutterMobile(options, warnings);
   if (options.framework === 'react-native') return handleReactNativeMobile(options, warnings);
+  if (options.framework === 'ionic') return handleIonicMobile(options, warnings);
+  if (options.framework === 'kmp') return handleKmpMobile(options, warnings);
   return handleExpoMobile(options, warnings);
 }
 

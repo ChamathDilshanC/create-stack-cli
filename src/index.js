@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import fs from 'fs-extra';
 import { box, confirm, intro, isCancel, outro, select } from '@clack/prompts';
 import { Command } from 'commander';
 import { execa } from 'execa';
@@ -20,6 +21,9 @@ import {
   TESTING_OPTIONS,
   getProjectOptions,
 } from './prompts.js';
+import { PRESETS, resolvePresetByName } from './presets.js';
+import { runAutomations } from './automations.js';
+import { checkForUpdate } from './update-checker.js';
 import { scaffoldProject } from './scaffold.js';
 import { installDependencies } from './install.js';
 import { installPythonDependencies } from './python-utils.js';
@@ -91,6 +95,8 @@ function parseArgs() {
     .option('--no-install', 'skip automatic dependency installation')
     .option('--editor <name>', `open the finished project in a code editor when done (${[...EDITOR_VALUES].join(', ')}) — skipped by default under --yes`)
     .option('-y, --yes', 'skip prompts, failing if a required option is missing')
+    .option('--preset <name>', `scaffold a known-good bundle of options (${Object.keys(PRESETS).join(', ')}) non-interactively — individual flags above still override it`)
+    .option('--from-config <path>', 'replay a previously generated .create-stack.json non-interactively — individual flags above still override it')
     .option('--overwrite', 'overwrite the target directory if it already exists')
     .allowExcessArguments(false)
     .parse(process.argv);
@@ -119,7 +125,11 @@ function parseArgs() {
     mlLibraries: opts.mlLibraries,
     editor: opts.editor,
     overwrite: Boolean(opts.overwrite),
-    yes: Boolean(opts.yes),
+    preset: opts.preset,
+    fromConfig: opts.fromConfig,
+    // --preset/--from-config exist specifically to bypass the wizard, same as
+    // -y — so either one implies it instead of requiring -y alongside them.
+    yes: Boolean(opts.yes) || Boolean(opts.preset) || Boolean(opts.fromConfig),
     // Commander gives --no-install/--no-hot-reload a default of `true`; only
     // trust that default when the flag was actually passed on the command line.
     install: program.getOptionValueSource('install') === 'cli' ? opts.install : undefined,
@@ -127,95 +137,152 @@ function parseArgs() {
   };
 }
 
-function buildPreset(cli) {
-  const preset = {};
+/**
+ * Lifts CLI flags onto the same field names `preset`/`getProjectOptions`
+ * use — no validation here, just the flag -> field mapping. Kept separate
+ * from validatePreset() below so that mapping happens once regardless of
+ * where the flags end up layered (see buildPreset).
+ */
+function normalizeCliOverrides(cli) {
+  const overrides = {};
 
-  if (cli.projectDirectory) preset.projectName = cli.projectDirectory;
+  if (cli.projectDirectory) overrides.projectName = cli.projectDirectory;
+  if (cli.type) overrides.projectType = cli.type;
+  if (cli.framework) overrides.framework = cli.framework;
+  if (cli.language) overrides.language = cli.language;
+  if (cli.styling) overrides.styling = cli.styling;
+  if (cli.database) overrides.database = cli.database;
+  if (cli.auth) overrides.auth = cli.auth;
+  if (cli.testing) overrides.testing = cli.testing;
+  if (cli.quality) overrides.quality = cli.quality;
+  if (cli.docker !== undefined) overrides.docker = Boolean(cli.docker);
+  if (cli.pm) overrides.pm = cli.pm;
+  if (cli.buildTool) overrides.buildTool = cli.buildTool;
+  if (cli.packaging) overrides.packaging = cli.packaging;
+  if (cli.javaVersion) overrides.javaVersion = cli.javaVersion;
+  if (cli.dependencies) {
+    overrides.springDependencies = cli.dependencies
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+  if (cli.groupId) overrides.groupId = cli.groupId;
+  if (cli.hotReload !== undefined) overrides.springHotReload = cli.hotReload;
+  if (cli.extraPackages) {
+    overrides.extraPackages = cli.extraPackages
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean);
+  }
+  if (cli.mlLibraries) {
+    overrides.mlLibraries = cli.mlLibraries
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean);
+  }
+  if (cli.install !== undefined) overrides.install = cli.install;
 
-  if (cli.type) {
-    if (!PROJECT_TYPE_VALUES.includes(cli.type)) {
-      throw new Error(`Unknown --type "${cli.type}". Available: ${PROJECT_TYPE_VALUES.join(', ')}`);
-    }
-    preset.projectType = cli.type;
+  return overrides;
+}
+
+/**
+ * Validates a fully-merged preset object — whatever combination of a named
+ * --preset, a loaded --from-config file, and explicit flags produced it.
+ * Runs on the *merged* result rather than each source individually, so a
+ * value inherited from --preset/--from-config gets exactly the same
+ * scrutiny as one passed directly on the command line (a hand-edited config
+ * file is just as capable of a typo as a flag is).
+ */
+function validatePreset(preset) {
+  if (preset.projectType && !PROJECT_TYPE_VALUES.includes(preset.projectType)) {
+    throw new Error(`Unknown project type "${preset.projectType}". Available: ${PROJECT_TYPE_VALUES.join(', ')}`);
   }
 
   let frameworkDef;
-  if (cli.framework) {
+  if (preset.framework) {
     if (!preset.projectType) {
-      throw new Error('--framework requires --type to be set first.');
+      throw new Error('"framework" requires "type" to be set first (via --type, --preset, or --from-config).');
     }
-    frameworkDef = FRAMEWORKS[preset.projectType].find((f) => f.value === cli.framework);
+    frameworkDef = FRAMEWORKS[preset.projectType].find((f) => f.value === preset.framework);
     if (!frameworkDef) {
       throw new Error(
-        `Unknown --framework "${cli.framework}" for type "${preset.projectType}". Available: ${FRAMEWORKS[preset.projectType].map((f) => f.value).join(', ')}`
+        `Unknown framework "${preset.framework}" for type "${preset.projectType}". Available: ${FRAMEWORKS[preset.projectType].map((f) => f.value).join(', ')}`
       );
     }
-    preset.framework = frameworkDef.value;
   }
   const isPython = frameworkDef?.runtime === 'python';
 
-  if (cli.language) {
-    // Python frameworks force this themselves; only ts/js are ever user-choosable.
-    if (!['ts', 'js'].includes(cli.language)) {
-      throw new Error(`Unknown --language "${cli.language}". Available: ts, js`);
+  if (preset.language !== undefined) {
+    // Frameworks that force their own language (Angular/NestJS -> ts, every
+    // Python/Java/Rust/... framework, etc.) may legitimately carry that
+    // value in a replayed config — only frameworks where ts/js is a real
+    // choice restrict it to that pair.
+    const validLanguage = frameworkDef?.forceLanguage ? [frameworkDef.forceLanguage] : ['ts', 'js'];
+    if (!validLanguage.includes(preset.language)) {
+      throw new Error(`Unknown language "${preset.language}". Available: ${validLanguage.join(', ')}`);
     }
-    preset.language = cli.language;
   }
 
-  if (cli.styling) {
+  if (preset.styling !== undefined) {
     // Mobile's styling choices (NativeWind/None) are a completely different
     // set from the web ones (Tailwind/UnoCSS/CSS Modules/None) — same
-    // "narrow by what's already known" idea as --database/--quality below.
+    // "narrow by what's already known" idea as database/quality below.
     const validStyling = preset.projectType === 'mobile' ? STYLING_VALUES_MOBILE : STYLING_VALUES;
-    if (!validStyling.has(cli.styling)) {
-      throw new Error(`Unknown --styling "${cli.styling}". Available: ${[...validStyling].join(', ')}`);
+    if (!validStyling.has(preset.styling)) {
+      throw new Error(`Unknown styling "${preset.styling}". Available: ${[...validStyling].join(', ')}`);
     }
-    preset.styling = cli.styling;
   }
 
-  if (cli.database) {
-    // When the framework isn't known yet (interactive framework pick, flag-
-    // driven database choice), accept either ecosystem's values and let
-    // getProjectOptions/the framework's own forceDatabase sort it out.
+  if (preset.database !== undefined) {
+    // When the framework isn't known yet, accept either ecosystem's values
+    // and let getProjectOptions/the framework's own forceDatabase sort it out.
     const validDatabase = frameworkDef ? (isPython ? DATABASE_VALUES_PYTHON : DATABASE_VALUES) : new Set([...DATABASE_VALUES, ...DATABASE_VALUES_PYTHON]);
-    if (!validDatabase.has(cli.database)) {
-      throw new Error(`Unknown --database "${cli.database}". Available: ${[...validDatabase].join(', ')}`);
+    if (!validDatabase.has(preset.database)) {
+      throw new Error(`Unknown database "${preset.database}". Available: ${[...validDatabase].join(', ')}`);
     }
-    preset.database = cli.database;
   }
 
-  if (cli.quality) {
+  if (preset.quality !== undefined) {
     const validQuality = frameworkDef ? (isPython ? QUALITY_VALUES_PYTHON : QUALITY_VALUES) : new Set([...QUALITY_VALUES, ...QUALITY_VALUES_PYTHON]);
-    if (!validQuality.has(cli.quality)) {
-      throw new Error(`Unknown --quality "${cli.quality}". Available: ${[...validQuality].join(', ')}`);
+    if (!validQuality.has(preset.quality)) {
+      throw new Error(`Unknown quality "${preset.quality}". Available: ${[...validQuality].join(', ')}`);
     }
-    preset.quality = cli.quality;
   }
 
   // Node-only questions (no Python/Java/Rust/... variant to narrow between,
-  // unlike --database/--quality above) — invalid regardless of framework.
-  if (cli.auth) {
-    if (!AUTH_VALUES.has(cli.auth)) {
-      throw new Error(`Unknown --auth "${cli.auth}". Available: ${[...AUTH_VALUES].join(', ')}`);
-    }
-    preset.auth = cli.auth;
+  // unlike database/quality above) — invalid regardless of framework.
+  if (preset.auth !== undefined && !AUTH_VALUES.has(preset.auth)) {
+    throw new Error(`Unknown auth "${preset.auth}". Available: ${[...AUTH_VALUES].join(', ')}`);
   }
 
-  if (cli.testing) {
-    if (!TESTING_VALUES.has(cli.testing)) {
-      throw new Error(`Unknown --testing "${cli.testing}". Available: ${[...TESTING_VALUES].join(', ')}`);
-    }
-    preset.testing = cli.testing;
+  if (preset.testing !== undefined && !TESTING_VALUES.has(preset.testing)) {
+    throw new Error(`Unknown testing "${preset.testing}". Available: ${[...TESTING_VALUES].join(', ')}`);
   }
 
-  if (cli.docker !== undefined) preset.docker = Boolean(cli.docker);
-
-  if (cli.pm) {
-    if (!PACKAGE_MANAGERS.includes(cli.pm)) {
-      throw new Error(`Unknown package manager "${cli.pm}". Available: ${PACKAGE_MANAGERS.join(', ')}`);
-    }
-    preset.pm = cli.pm;
+  if (preset.pm !== undefined && !PACKAGE_MANAGERS.includes(preset.pm)) {
+    throw new Error(`Unknown package manager "${preset.pm}". Available: ${PACKAGE_MANAGERS.join(', ')}`);
   }
+
+  if (preset.buildTool !== undefined && !['maven', 'gradle'].includes(preset.buildTool)) {
+    throw new Error(`Unknown build tool "${preset.buildTool}". Available: maven, gradle`);
+  }
+
+  if (preset.packaging !== undefined && !['jar', 'war'].includes(preset.packaging)) {
+    throw new Error(`Unknown packaging "${preset.packaging}". Available: jar, war`);
+  }
+}
+
+/**
+ * Merges, in increasing precedence, a named --preset, a loaded --from-config
+ * file, and whatever flags were passed directly — so `--preset saas -d
+ * drizzle` scaffolds the saas bundle with Drizzle instead of Prisma, and
+ * `--from-config ./old/.create-stack.json my-new-app` replays a prior run
+ * under a new directory name (the positional argument still wins over
+ * whatever projectName the config file carries).
+ */
+function buildPreset(cli, base = {}) {
+  const preset = { ...base, ...normalizeCliOverrides(cli) };
+  validatePreset(preset);
 
   // Not a project-decision field (doesn't belong on `preset`/getProjectOptions) —
   // validated here anyway, alongside every other flag, so a typo fails fast
@@ -224,45 +291,42 @@ function buildPreset(cli) {
     throw new Error(`Unknown --editor "${cli.editor}". Available: ${[...EDITOR_VALUES].join(', ')}`);
   }
 
-  if (cli.buildTool) {
-    if (!['maven', 'gradle'].includes(cli.buildTool)) {
-      throw new Error(`Unknown --build-tool "${cli.buildTool}". Available: maven, gradle`);
-    }
-    preset.buildTool = cli.buildTool;
-  }
-
-  if (cli.packaging) {
-    if (!['jar', 'war'].includes(cli.packaging)) {
-      throw new Error(`Unknown --packaging "${cli.packaging}". Available: jar, war`);
-    }
-    preset.packaging = cli.packaging;
-  }
-
-  if (cli.javaVersion) preset.javaVersion = cli.javaVersion;
-  if (cli.dependencies) {
-    preset.springDependencies = cli.dependencies
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean);
-  }
-  if (cli.groupId) preset.groupId = cli.groupId;
-  if (cli.hotReload !== undefined) preset.springHotReload = cli.hotReload;
-  if (cli.extraPackages) {
-    preset.extraPackages = cli.extraPackages
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean);
-  }
-  if (cli.mlLibraries) {
-    preset.mlLibraries = cli.mlLibraries
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean);
-  }
-
-  if (cli.install !== undefined) preset.install = cli.install;
-
   return preset;
+}
+
+/** Fields that describe *this* run rather than the underlying decisions — dropped from a loaded config so replaying it targets a fresh directory instead of inheriting the previous run's resolved path. */
+const CONFIG_NON_REPLAYABLE_KEYS = new Set(['targetDir']);
+
+/** Loads a `.create-stack.json` written by a previous run (see writeReplayConfig) for `--from-config` to replay. */
+function loadConfigFile(configPath) {
+  const resolved = path.resolve(process.cwd(), configPath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`--from-config file not found: ${resolved}`);
+  }
+
+  let data;
+  try {
+    data = fs.readJsonSync(resolved);
+  } catch (err) {
+    throw new Error(`--from-config file "${resolved}" is not valid JSON: ${err.message}`);
+  }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error(`--from-config file "${resolved}" must contain a JSON object.`);
+  }
+
+  const config = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (!CONFIG_NON_REPLAYABLE_KEYS.has(key)) config[key] = value;
+  }
+  return config;
+}
+
+/** Combines --preset and --from-config (in that order — a config file layers on top of, and can override, a named preset) into the base object buildPreset() then applies flags on top of. */
+function resolveBaseOptions(cli) {
+  let base = {};
+  if (cli.preset) base = { ...base, ...resolvePresetByName(cli.preset) };
+  if (cli.fromConfig) base = { ...base, ...loadConfigFile(cli.fromConfig) };
+  return base;
 }
 
 function assertNonInteractiveComplete(preset, cli) {
@@ -299,10 +363,23 @@ function assertNonInteractiveComplete(preset, cli) {
   if (preset.database === undefined && !frameworkDef?.forceDatabase) preset.database = 'none';
   if (preset.auth === undefined) preset.auth = 'none';
   if (preset.testing === undefined) preset.testing = 'none';
+  // Only consumed for projectType 'backend' (see prompts.js's
+  // supportsHotReload) — harmless to default everywhere else, same as
+  // auth/testing/quality above already do.
+  if (preset.hotReload === undefined) preset.hotReload = true;
+  // Same story — only consumed for frontend/fullstack (supportsUiLayer), and
+  // uiKit further narrows by framework/styling on top of that (stepUiKit) —
+  // defaulting to 'none' everywhere else is always harmless.
+  if (preset.stateManagement === undefined) preset.stateManagement = 'none';
+  if (preset.apiLayer === undefined) preset.apiLayer = 'none';
+  if (preset.uiKit === undefined) preset.uiKit = 'none';
   if (preset.quality === undefined) preset.quality = 'none';
   if (preset.extraPackages === undefined) preset.extraPackages = [];
   if (preset.docker === undefined) preset.docker = false;
   if (preset.install === undefined) preset.install = true;
+  // Neutralino ships no package.json — nothing for a live install to act on
+  // (see prompts.js's stepInstall for the interactive-mode equivalent).
+  if (preset.framework === 'neutralino') preset.install = false;
   if (isPython) preset.pm = 'pip';
   if (isJava) {
     if (preset.buildTool === undefined) preset.buildTool = 'maven';
@@ -323,7 +400,10 @@ function assertNonInteractiveComplete(preset, cli) {
   }
   if (isGo) {
     preset.pm = 'go';
-    preset.install = false;
+    // Wails is the one Go framework with a genuine npm-installable
+    // frontend/ (see prompts.js's stepInstall) — default it to true, the
+    // same as every Node-family framework, rather than forcing it off.
+    preset.install = preset.framework === 'wails' ? (preset.install ?? true) : false;
   }
   if (isPhp) {
     preset.pm = 'composer';
@@ -394,12 +474,17 @@ function devCommand(options) {
   const { framework, pm } = options;
 
   if (options.runtime === 'python') {
-    if (framework === 'django') return 'python manage.py runserver';
+    // Django's runserver auto-reloads by default; --noreload is the only way
+    // to turn that off, which is what a "No" answer to the hot-reload
+    // question (see prompts.js's stepHotReload) means here.
+    if (framework === 'django') return options.hotReload === false ? 'python manage.py runserver --noreload' : 'python manage.py runserver';
+    // Flask's own reload behavior is baked into app.run(debug=...) at
+    // scaffold time (see scaffold.js's flaskMain) — nothing to toggle here.
     if (framework === 'flask') return 'python app/main.py';
     // Plain uvicorn rather than `fastapi dev`: the latter's rich/emoji
     // output can crash outright on a legacy (non-UTF-8) Windows console —
     // uvicorn's is plain text and works everywhere fastapi[standard] does.
-    if (framework === 'fastapi') return 'uvicorn app.main:app --reload';
+    if (framework === 'fastapi') return options.hotReload === false ? 'uvicorn app.main:app' : 'uvicorn app.main:app --reload';
     // AI/ML has no dev server — it's a plain script, not a web app.
     if (framework === 'python-ml') return 'python main.py';
   }
@@ -419,10 +504,16 @@ function devCommand(options) {
   }
 
   if (options.runtime === 'go') {
-    // `go run .` fetches nothing on its own (that's `go mod tidy`'s job,
-    // already offered opportunistically in backend-go.js) but it does
-    // compile-and-run in one step, the closest equivalent to `cargo run`.
-    return 'go run .';
+    // Wails shares runtime 'go' with the Gin/Fiber/Echo backends above (it's
+    // a Go module too) but is a completely different kind of app — `wails
+    // dev` builds the Go binary and starts the frontend's Vite dev server
+    // together, hot-reloading both; `go run .`/`make dev` (correct for a
+    // plain Go backend) wouldn't even build a Wails app correctly.
+    if (framework === 'wails') return 'wails dev';
+    // `make dev` runs air (see hot-reload.js's writeGoAirConfig, wired in by
+    // backend-go.js) when hot-reload was requested; otherwise plain `go run
+    // .` — same story as Rust's cargo run above, nothing separate to resolve.
+    return options.hotReload ? 'make dev' : 'go run .';
   }
 
   if (options.runtime === 'php') {
@@ -451,6 +542,12 @@ function devCommand(options) {
   }
 
   if (options.runtime === 'kotlin') {
+    // KMP's application plugin lives on the separate :app subproject (see
+    // mobile-kmp.js — Gradle's own KMP plugin rejects `application` applied
+    // directly to a kotlin("multiplatform") module), not the root project
+    // Ktor's single-module layout assumes — needs the subproject-qualified
+    // task name, unlike Ktor's plain `run` below.
+    if (framework === 'kmp') return 'gradle :app:run';
     // Plain `gradle run` rather than `./gradlew run`: backend-kotlin.js only
     // generates a wrapper opportunistically (when a system Gradle was found
     // to bootstrap it from), and that success/failure isn't threaded through
@@ -483,6 +580,9 @@ function devCommand(options) {
   }
 
   const runPrefix = pm === 'npm' ? 'npm run' : pm;
+  // Neutralino's minimal template ships no package.json at all (see
+  // desktop-neutralino.js) — there's no "<pm> dev" to fall through to below.
+  if (framework === 'neutralino') return 'npx @neutralinojs/neu run';
   if (framework === 'expo') return 'npx expo start';
   // Bare React Native has no single "just run it" command — Metro (the
   // bundler) starts here, but android/ios still need their own native
@@ -507,12 +607,14 @@ function printSummary(options, { targetDir, cwd, installed, warnings }) {
   if (options.runtime === 'python') {
     steps.push(VENV_ACTIVATE);
     if (!installed) steps.push('pip install -r requirements.txt');
-  } else if (NO_LIVE_INSTALL_STEP_RUNTIMES.has(options.runtime)) {
+  } else if (NO_LIVE_INSTALL_STEP_RUNTIMES.has(options.runtime) || options.framework === 'neutralino') {
     // Maven/Gradle's own wrapper (Cargo on `cargo run`, Flutter's own `pub get`
     // at scaffold time, Go/dotnet/Kotlin resolving lazily on first build, Deno
     // caching imports on first run, Laravel/Rails always installing as part
     // of their own scaffolder) resolves dependencies itself — nothing
-    // separate to install here.
+    // separate to install here. Neutralino ships no package.json at all
+    // (see desktop-neutralino.js), so "npm install" wouldn't even find
+    // anything to act on.
   } else if (!installed) {
     steps.push(`${options.pm} install`);
   }
@@ -609,7 +711,40 @@ async function maybeOpenEditor(targetDir, cli) {
   }
 }
 
+/**
+ * options fields left out of the saved config: `targetDir` is this run's
+ * absolute path, meaningless to replay elsewhere, and `packageName` is
+ * always recomputed from `projectName` by stepPackageName regardless of
+ * what's already set (see prompts.js) — saving it would just be a dead
+ * field a reader could mistake for something --from-config honors.
+ */
+const OPTIONS_NON_REPLAYABLE_KEYS = new Set(['targetDir', 'packageName']);
+
+/**
+ * Writes the resolved decisions behind this project — everything
+ * `getProjectOptions` returned, plus whatever scaffold.js/index.js added to
+ * it minus run-specific state like the absolute target path — to
+ * `.create-stack.json` in the new project's root. `--from-config` reads this
+ * same file back to reproduce the setup non-interactively later, e.g. for a
+ * second app that should match the first, or to hand a known-good starting
+ * point to a teammate.
+ */
+function writeReplayConfig(targetDir, options) {
+  const config = {};
+  for (const [key, value] of Object.entries(options)) {
+    if (OPTIONS_NON_REPLAYABLE_KEYS.has(key) || value === undefined) continue;
+    config[key] = value;
+  }
+  fs.writeJsonSync(path.join(targetDir, '.create-stack.json'), config, { spaces: 2 });
+}
+
 async function main() {
+  // The very first thing this CLI does on every invocation, before parsing
+  // args or printing the banner — bounded by its own short internal
+  // timeout (see update-checker.js), so a slow/offline network never
+  // meaningfully delays startup either way.
+  await checkForUpdate();
+
   const cli = parseArgs();
   if (!cli.yes) {
     printBanner(pkg);
@@ -623,7 +758,8 @@ async function main() {
     intro(pc.bgCyan(pc.black(' create-stack '.padEnd(introWidth))));
   }
 
-  const preset = buildPreset(cli);
+  const base = resolveBaseOptions(cli);
+  const preset = buildPreset(cli, base);
   assertNonInteractiveComplete(preset, cli);
 
   const options = await getProjectOptions(preset, { interactive: !cli.yes });
@@ -643,13 +779,23 @@ async function main() {
   // relevant), but none of them reliably finish installing everything this
   // CLI subsequently adds to package.json — so this final pass always runs
   // when the user asked for one, the same as every other project type.
+  // Wails and Neutralino are the exceptions: Wails' package.json lives
+  // under frontend/, not targetDir itself (handleWailsDesktop already
+  // installs there directly, and options.pm is 'go' for it — install.js has
+  // no "go" install path); Neutralino has no package.json anywhere in the
+  // project at all (see desktop-neutralino.js). Either way there's no
+  // root-level package.json for a live install here to act on.
+  const NO_ROOT_PACKAGE_JSON_FRAMEWORKS = new Set(['wails', 'neutralino']);
   let installed = false;
-  if (options.install) {
+  if (options.install && !NO_ROOT_PACKAGE_JSON_FRAMEWORKS.has(options.framework)) {
     installed =
       options.runtime === 'python'
         ? await installPythonDependencies(targetDir, warnings)
         : await installDependencies(targetDir, options.pm);
   }
+
+  writeReplayConfig(targetDir, options);
+  await runAutomations(targetDir, options, warnings);
 
   printSummary(options, { targetDir, cwd, installed, warnings });
   await maybeOpenEditor(targetDir, cli);

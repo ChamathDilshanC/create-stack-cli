@@ -139,6 +139,139 @@ export async function mergeScripts(targetDir, scripts) {
 }
 
 /**
+ * React (Vite) scaffolds from this CLI always root everything under src/ —
+ * confirmed by the react/react-ts Vite templates' own layout. Next.js's App
+ * Router does not: create-next-app's current default (no --src-dir flag
+ * passed by runNextCreate) puts app/ at the project root with no src/ at
+ * all, and its tsconfig's "@/*" path alias maps straight to "./*" — the
+ * same thing auth.js's setupNextAuth already assumes for app/api/auth/.
+ * Shared here so state-management.js/api-layer.js/ui-kits.js don't each
+ * have to special-case this per framework themselves.
+ */
+export function jsSrcRoot(framework) {
+  return framework === 'next' ? '' : 'src';
+}
+
+/* ------------------------------------------------------------------ */
+/* Next.js client-provider composition                                 */
+/* ------------------------------------------------------------------ */
+
+const NEXT_PROVIDERS_START = '{/* PROVIDERS */}';
+const NEXT_PROVIDERS_END = '{/* /PROVIDERS */}';
+
+/**
+ * A JSX comment (an expression container holding only a comment) is only
+ * legal as a JSX *child* — placed directly inside return(...)'s parens
+ * instead, it parses as a plain (empty) object literal, immediately
+ * followed by a second, illegally-adjacent expression: a syntax error. The
+ * outer fragment below exists solely so the two NEXT_PROVIDERS sentinels
+ * have a legal child position to sit in.
+ */
+const freshNextProvidersFile = (isTs) => `'use client';
+${isTs ? "\nimport type { ReactNode } from 'react';\n" : ''}
+export function Providers({ children }${isTs ? ': { children: ReactNode }' : ''}) {
+  return (
+    <>
+      ${NEXT_PROVIDERS_START}
+      <>{children}</>
+      ${NEXT_PROVIDERS_END}
+    </>
+  );
+}
+`;
+
+/**
+ * Next.js's App Router root layout (app/layout.tsx) is a server component,
+ * so any client-side context provider — Redux's <Provider>, Apollo's
+ * <ApolloProvider>, MUI's <ThemeProvider>, ... — needs its own 'use client'
+ * wrapper. State management, the API layer, and UI kits can each need one of
+ * these, so rather than each feature writing (and clobbering) its own
+ * src/app/providers.tsx, this nests a new provider around whatever already
+ * sits between the PROVIDERS sentinel comments — safe to do repeatedly and
+ * in any order because this file's exact shape is entirely ours; nothing
+ * external ever generates or reads it except the one-time instruction
+ * finalizeNextProviders() below pushes for wiring it into layout.tsx.
+ */
+export async function registerNextProvider(targetDir, isTs, { importLines, open, close }) {
+  const ext = isTs ? 'tsx' : 'jsx';
+  const providersPath = path.join(targetDir, 'app', `providers.${ext}`);
+
+  let source = (await fs.pathExists(providersPath)) ? await fs.readFile(providersPath, 'utf8') : freshNextProvidersFile(isTs);
+
+  // Inserted together (not one replace() per line) so a caller passing
+  // several import lines gets them in declared order, each on its own
+  // line — looping individual replace() calls against the same
+  // "'use client';\n" anchor would instead insert each new call's lines
+  // right after that anchor and ahead of every earlier call's, reversing
+  // order across calls and (without a trailing newline on the anchor's
+  // replacement) running consecutive lines from a single call together.
+  const newLines = importLines.filter((line) => !source.includes(line));
+  if (newLines.length > 0) {
+    source = source.replace("'use client';\n", `'use client';\n${newLines.join('\n')}\n`);
+  }
+
+  const startIdx = source.indexOf(NEXT_PROVIDERS_START);
+  const endIdx = source.indexOf(NEXT_PROVIDERS_END);
+  if (startIdx === -1 || endIdx === -1) return false;
+
+  const before = source.slice(0, startIdx + NEXT_PROVIDERS_START.length);
+  const inner = source.slice(startIdx + NEXT_PROVIDERS_START.length, endIdx).trim();
+  const after = source.slice(endIdx);
+
+  // Idempotency guard: a re-run (or a duplicate call) sees its own tag
+  // already wrapping the inner content and leaves it alone.
+  const tagName = open.match(/^<([A-Za-z0-9_.]+)/)?.[1];
+  if (tagName && inner.startsWith(`<${tagName}`)) return true;
+
+  source = `${before}\n    ${open}\n      ${inner}\n    ${close}\n    ${after}`;
+  await fs.writeFile(providersPath, source);
+  return true;
+}
+
+/**
+ * Wraps <App /> in a plain Vite React app's src/main.tsx|jsx with a client
+ * provider — Redux's <Provider>, MUI's <ThemeProvider>, ... — via a single
+ * literal string replace rather than a full JSX parse. Safe because Vite's
+ * react/react-ts templates have kept this exact `<App />` render shape for
+ * years; still guarded (returns false instead of guessing) if it's ever not
+ * found, so a template change fails loud in a warning instead of silently
+ * no-op-ing.
+ */
+export async function wrapViteReactRoot(targetDir, isTs, { importLine, open, close }) {
+  const mainPath = path.join(targetDir, 'src', isTs ? 'main.tsx' : 'main.jsx');
+  if (!(await fs.pathExists(mainPath))) return false;
+
+  let source = await fs.readFile(mainPath, 'utf8');
+  if (source.includes(importLine)) return true;
+  if (!source.includes('<App />')) return false;
+
+  source = `${importLine}\n${source}`;
+  source = source.replace('<App />', `${open}\n      <App />\n    ${close}`);
+  await fs.writeFile(mainPath, source);
+  return true;
+}
+
+/**
+ * Called once, after every feature that might have called
+ * registerNextProvider() above has run — pushes a single "wire this in"
+ * instruction (rather than one per feature) only when at least one provider
+ * actually got composed. Mirrors auth.js's Express instruction: this CLI
+ * never string-patches a file it didn't write itself (app/layout.tsx comes
+ * from create-next-app, whose exact template text isn't ours to depend on),
+ * so the last step is always a precise, copy-pasteable instruction instead.
+ */
+export async function finalizeNextProviders(targetDir, isTs, warnings) {
+  const ext = isTs ? 'tsx' : 'jsx';
+  const providersPath = path.join(targetDir, 'app', `providers.${ext}`);
+  if (!(await fs.pathExists(providersPath))) return;
+
+  warnings.push(
+    `An app/providers.${ext} was generated to hold your client-side providers — wrap your app in it: add ` +
+      `"import { Providers } from './providers';" near the top of app/layout.${ext}, then change "{children}" to "<Providers>{children}</Providers>".`
+  );
+}
+
+/**
  * Installs `packages` (dev or runtime) with a live command when allowed on
  * the network; otherwise (or on failure) merges version floors into
  * package.json so the user's next `<pm> install` resolves them. Pushes a

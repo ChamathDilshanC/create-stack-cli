@@ -211,6 +211,18 @@ export const FRAMEWORKS = {
   desktop: [
     { value: 'electron', title: 'Electron', scaffolder: 'electron' },
     { value: 'tauri', title: 'Tauri', scaffolder: 'tauri' },
+    // Wails: Go backend + a webview frontend (Go's answer to Tauri/Electron
+    // — a Go binary embedding a native OS webview instead of Chromium/Rust).
+    // Its own `wails init` scaffolds both halves in one project, the same
+    // "call the real official tool" story every runScaffolder-based entry
+    // here follows. forceDatabase 'none' mirrors every other Go entry
+    // (Gin/Fiber/Echo above) — no separate ORM question either.
+    { value: 'wails', title: 'Wails (Go + Web)', scaffolder: 'wails', runtime: 'go', forceLanguage: 'go', forceDatabase: 'none' },
+    // Neutralino.js: a lightweight native wrapper like Tauri/Wails, but
+    // needs neither Rust nor Go — just Node + its own small compiled
+    // binary (fetched by @neutralinojs/neu itself at scaffold time), so it
+    // stays on runtime 'node' like Electron rather than forcing a new one.
+    { value: 'neutralino', title: 'Neutralino.js', scaffolder: 'neutralino' },
   ],
   mobile: [
     // Bare React Native via the official Community CLI — no Expo layer.
@@ -225,11 +237,32 @@ export const FRAMEWORKS = {
     // `flutter analyze`, already wired into every generated project) means
     // the quality/database/styling questions below are all skipped for it.
     { value: 'flutter', title: 'Flutter (Dart)', scaffolder: 'flutter', runtime: 'dart', forceLanguage: 'dart' },
+    // Ionic's own `ionic start` scaffolds a Capacitor-backed hybrid app;
+    // this CLI always asks for the React flavor (Ionic also offers Angular/
+    // Vue starters, but one is enough to keep this entry's scope the same
+    // size as every other single-flavor mobile framework here) — its React
+    // starter is TypeScript-only, same story as bare React Native above.
+    { value: 'ionic', title: 'Ionic (React)', scaffolder: 'ionic', forceLanguage: 'ts' },
+    // Kotlin Multiplatform reuses Ktor's own runtime 'kotlin' (no npm-family
+    // package manager, Gradle instead, quality/database/testing questions
+    // all skipped the same way) — see backend-kotlin.js's handleKtorBackend
+    // for the precedent this mirrors.
+    { value: 'kmp', title: 'Kotlin Multiplatform (KMP)', scaffolder: 'kmp', runtime: 'kotlin', forceLanguage: 'kotlin', forceDatabase: 'none' },
   ],
-  // Not a web backend — a plain Python project preloaded with whichever
-  // data-science/ML library bundles were picked in stepMlLibraries below.
-  // Single entry, same as Mobile: stepFramework auto-selects it, nothing to ask.
-  ai: [{ value: 'python-ml', title: 'Python (Data Science / ML)', scaffolder: 'python-ml', runtime: 'python', forceLanguage: 'python' }],
+  ai: [
+    // Not a web backend — a plain Python project preloaded with whichever
+    // data-science/ML library bundles were picked in stepMlLibraries below.
+    { value: 'python-ml', title: 'Python (Data Science / ML)', scaffolder: 'python-ml', runtime: 'python', forceLanguage: 'python' },
+    // The JS/TS track: a real Next.js app (not a plain script, unlike the
+    // Python entry above) pre-wired with the Vercel AI SDK + LangChain.js —
+    // an opinionated preset in the same spirit as Flutter/Rust/Spring
+    // above, not a wizard-configurable framework: project type 'ai' isn't
+    // in supportsStyling/supportsDatabase/supportsAuth/supportsTesting/etc
+    // (see those predicates further down), so none of those questions get
+    // asked for it either — ai.js's own handler makes those calls itself
+    // (always TypeScript + Tailwind) rather than reading options.styling.
+    { value: 'ai-nextjs', title: 'Next.js + Vercel AI SDK (JS/TS)', scaffolder: 'ai-nextjs', forceLanguage: 'ts' },
+  ],
 };
 
 /**
@@ -291,6 +324,52 @@ export const STYLING_OPTIONS = [
 /** Mobile's own styling choice — Tailwind/UnoCSS/CSS Modules are web-only; NativeWind is React Native's Tailwind-compatible equivalent. Not offered for Flutter (a completely different, widget-based styling system) — see stepStyling's runtime check below. */
 export const STYLING_OPTIONS_MOBILE = [
   { value: 'nativewind', title: 'NativeWind' },
+  { value: 'none', title: 'None' },
+];
+
+/** React/Next.js's state management choices — see stepStateManagement below for the Vue/Nuxt (Pinia) counterpart. */
+export const STATE_MANAGEMENT_OPTIONS_REACT = [
+  { value: 'zustand', title: 'Zustand' },
+  { value: 'redux-toolkit', title: 'Redux Toolkit' },
+  { value: 'jotai', title: 'Jotai' },
+  { value: 'none', title: 'None' },
+];
+
+/** Vue/Nuxt's own state management choice — Pinia is Vue's official successor to Vuex, with no real alternative worth offering alongside it here. */
+export const STATE_MANAGEMENT_OPTIONS_VUE = [
+  { value: 'pinia', title: 'Pinia' },
+  { value: 'none', title: 'None' },
+];
+
+/** Real scaffolding only for tRPC/GraphQL on React and Next.js so far (see api-layer.js) — offered across every frontend/fullstack framework anyway, the same "full menu, one real implementation" story TESTING_OPTIONS below already tells. */
+export const API_LAYER_OPTIONS = [
+  { value: 'trpc', title: 'tRPC' },
+  { value: 'graphql-apollo', title: 'GraphQL (Apollo Client)' },
+  { value: 'graphql-urql', title: 'GraphQL (URQL)' },
+  { value: 'none', title: 'None' },
+];
+
+/** React/Next.js's UI kit choices when Tailwind is the styling pick — shadcn/ui and DaisyUI are both Tailwind-only (see stepUiKit below for the non-Tailwind and non-React variants). */
+export const UI_KIT_OPTIONS_REACT_TAILWIND = [
+  { value: 'shadcn', title: 'shadcn/ui' },
+  { value: 'mui', title: 'Material UI' },
+  { value: 'chakra', title: 'Chakra UI' },
+  { value: 'antd', title: 'Ant Design' },
+  { value: 'daisyui', title: 'DaisyUI' },
+  { value: 'none', title: 'None' },
+];
+
+/** React/Next.js without Tailwind — shadcn/ui and DaisyUI drop off the list above since both require it. */
+export const UI_KIT_OPTIONS_REACT = [
+  { value: 'mui', title: 'Material UI' },
+  { value: 'chakra', title: 'Chakra UI' },
+  { value: 'antd', title: 'Ant Design' },
+  { value: 'none', title: 'None' },
+];
+
+/** Every other frontend/fullstack framework with Tailwind on (Vue, Svelte, Angular, ...) — DaisyUI is a plain Tailwind plugin with no React dependency, so it's the one kit this CLI can safely offer outside the React family. */
+export const UI_KIT_OPTIONS_DAISYUI_ONLY = [
+  { value: 'daisyui', title: 'DaisyUI' },
   { value: 'none', title: 'None' },
 ];
 
@@ -360,6 +439,25 @@ export const supportsTesting = (projectType) =>
 
 /** Same reasoning as Database above — auth needs a server/session to hold, so this is never asked for a plain frontend SPA (or Desktop/Mobile/AI). */
 export const supportsAuth = (projectType) => projectType === 'backend' || projectType === 'fullstack';
+
+/**
+ * Only `backend` gets asked — frontend/fullstack's own dev server (Vite,
+ * Next.js, Nuxt, SvelteKit, Astro) already hot-reloads with nothing to
+ * configure, and Desktop/Mobile/AI have no long-running dev server this CLI
+ * manages at all. Unlike supportsTesting/supportsAuth above, this isn't
+ * restricted to `runtime === 'node'` — Python and Go backends get asked too
+ * (see stepHotReload below).
+ */
+export const supportsHotReload = (projectType) => projectType === 'backend';
+
+/**
+ * Shared by stepStateManagement, stepApiLayer, and stepUiKit below — state
+ * management, an API layer, and a UI kit are all "how the UI is built"
+ * decisions, so (unlike Auth/Database/Testing above, which need a server to
+ * mean anything) they only make sense where there's a UI at all: a plain
+ * frontend SPA or a fullstack app, never Backend/Desktop/Mobile/AI.
+ */
+export const supportsUiLayer = (projectType) => projectType === 'frontend' || projectType === 'fullstack';
 
 /** Sentinel a select-style step resolves to when the user picks "← Back" instead of answering. */
 const BACK = Symbol('back');
@@ -586,6 +684,88 @@ async function stepStyling(result) {
   return 'ok';
 }
 
+/** Frameworks with a real state-management choice wired up (see state-management.js) — everything else (Svelte, Solid, Angular, SvelteKit, Astro) skips the question entirely rather than offering options that would just fall through to "not yet wired". */
+const STATE_MANAGEMENT_REACT_FAMILY = new Set(['react', 'next']);
+const STATE_MANAGEMENT_VUE_FAMILY = new Set(['vue', 'nuxt']);
+
+async function stepStateManagement(result) {
+  const isReactFamily = STATE_MANAGEMENT_REACT_FAMILY.has(result.framework);
+  const isVueFamily = STATE_MANAGEMENT_VUE_FAMILY.has(result.framework);
+  if (!supportsUiLayer(result.projectType) || (!isReactFamily && !isVueFamily)) {
+    result.stateManagement = 'none';
+    return 'skip';
+  }
+  if (result.stateManagement) return 'skip';
+
+  const stateManagement = guardCancel(
+    await autocomplete({
+      message: 'State management:',
+      options: withBack(toOptions(isReactFamily ? STATE_MANAGEMENT_OPTIONS_REACT : STATE_MANAGEMENT_OPTIONS_VUE)),
+      placeholder: 'Type to search...',
+    })
+  );
+  if (stateManagement === BACK) return 'back';
+  result.stateManagement = stateManagement;
+  return 'ok';
+}
+
+/** Asked across every frontend/fullstack framework (unlike state management above, whose option set itself is framework-specific) — api-layer.js pushes its own "not yet wired" warning for anything besides React/Next.js. */
+async function stepApiLayer(result) {
+  if (!supportsUiLayer(result.projectType)) {
+    result.apiLayer = 'none';
+    return 'skip';
+  }
+  if (result.apiLayer) return 'skip';
+
+  const apiLayer = guardCancel(
+    await autocomplete({
+      message: 'API layer:',
+      options: withBack(toOptions(API_LAYER_OPTIONS)),
+      placeholder: 'Type to search...',
+    })
+  );
+  if (apiLayer === BACK) return 'back';
+  result.apiLayer = apiLayer;
+  return 'ok';
+}
+
+/**
+ * Runs after stepStyling (needs result.styling already resolved — shadcn/ui
+ * and DaisyUI both require Tailwind). React/Next.js get the full menu
+ * (narrowed further to drop shadcn/DaisyUI when Tailwind isn't picked);
+ * every other framework only ever sees DaisyUI, and only with Tailwind on,
+ * since MUI/Chakra/shadcn/Ant Design are all React-only (see ui-kits.js).
+ */
+const UI_KIT_REACT_FAMILY = new Set(['react', 'next']);
+
+async function stepUiKit(result) {
+  if (!supportsUiLayer(result.projectType)) {
+    result.uiKit = 'none';
+    return 'skip';
+  }
+
+  const isReactFamily = UI_KIT_REACT_FAMILY.has(result.framework);
+  const hasTailwind = result.styling === 'tailwind';
+  if (!isReactFamily && !hasTailwind) {
+    result.uiKit = 'none';
+    return 'skip';
+  }
+  if (result.uiKit) return 'skip';
+
+  const options = isReactFamily ? (hasTailwind ? UI_KIT_OPTIONS_REACT_TAILWIND : UI_KIT_OPTIONS_REACT) : UI_KIT_OPTIONS_DAISYUI_ONLY;
+
+  const uiKit = guardCancel(
+    await autocomplete({
+      message: 'UI kit:',
+      options: withBack(toOptions(options)),
+      placeholder: 'Type to search...',
+    })
+  );
+  if (uiKit === BACK) return 'back';
+  result.uiKit = uiKit;
+  return 'ok';
+}
+
 /**
  * Only where there's a server to run it in. Django always ships its own ORM,
  * so this is forced/skipped for it, the same way Angular/NestJS force a
@@ -662,6 +842,40 @@ async function stepTesting(result) {
   );
   if (testing === BACK) return 'back';
   result.testing = testing;
+  return 'ok';
+}
+
+/**
+ * Node/Python/Go backends all get wired to a real auto-restart-on-change
+ * tool for "No" (see scaffold.js/backend-go.js) — this is the one question
+ * behind all three, asked once regardless of which runtime ends up chosen.
+ * Spring Boot skips this and asks its own equivalent instead (see
+ * stepSpringHotReload below, via DevTools) rather than asking twice.
+ */
+async function stepHotReload(result) {
+  if (!supportsHotReload(result.projectType) || isSpring(result)) {
+    // Not this step's call to make (frontend/fullstack already hot-reload
+    // out of the box; Spring has its own springHotReload question instead)
+    // — dropped rather than left as whatever a blanket -y default or a
+    // replayed config happened to carry in, so it never leaks into a saved
+    // .create-stack.json for a project type it doesn't apply to.
+    delete result.hotReload;
+    return 'skip';
+  }
+  if (result.hotReload !== undefined) return 'skip';
+
+  const hotReload = guardCancel(
+    await select({
+      message: 'Set up auto-restart / hot-reloading for development?',
+      options: withBack([
+        { value: true, label: 'Yes' },
+        { value: false, label: 'No' },
+      ]),
+      initialValue: true,
+    })
+  );
+  if (hotReload === BACK) return 'back';
+  result.hotReload = hotReload;
   return 'ok';
 }
 
@@ -1022,7 +1236,17 @@ async function stepPackageManager(result) {
 const NO_LIVE_INSTALL_STEP_RUNTIMES = ['java', 'rust', 'dart', 'go', 'php', 'ruby', 'dotnet', 'deno', 'kotlin'];
 
 async function stepInstall(result) {
-  if (NO_LIVE_INSTALL_STEP_RUNTIMES.includes(result.runtime)) {
+  // Wails shares runtime 'go' with the Gin/Fiber/Echo backends above (the
+  // blanket skip this list gives them), but unlike a plain Go backend it
+  // also has a genuine npm-installable frontend/ that nothing resolves
+  // automatically the way `go build`/`cargo run` do — so it still gets
+  // asked, the same as any Node-family framework would.
+  // Neutralino ships no package.json at all (see desktop-neutralino.js) —
+  // `neu create` already resolved everything (runtime binaries, client
+  // library) as part of scaffolding, so there's nothing to ask about here
+  // either, the same "nothing separate to resolve" story every runtime in
+  // the list below already tells.
+  if ((NO_LIVE_INSTALL_STEP_RUNTIMES.includes(result.runtime) && result.framework !== 'wails') || result.framework === 'neutralino') {
     result.install = false;
     return 'skip';
   }
@@ -1050,9 +1274,13 @@ const STEPS = [
   stepToolchainPreflight,
   stepLanguage,
   stepStyling,
+  stepUiKit,
+  stepStateManagement,
+  stepApiLayer,
   stepDatabase,
   stepAuth,
   stepTesting,
+  stepHotReload,
   stepMlLibraries,
   stepSpringBuildTool,
   stepSpringPackaging,

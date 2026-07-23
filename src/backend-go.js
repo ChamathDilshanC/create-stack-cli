@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'fs-extra';
 
 import { applyDocker } from './docker.js';
+import { writeGoAirConfig } from './hot-reload.js';
 import { checkToolchain, missingToolchainWarning } from './runtime-check.js';
 import { tryRun } from './scaffold-utils.js';
 import { logger } from './utils.js';
@@ -490,6 +491,10 @@ export async function handleGoBackend(options, warnings) {
   await fs.writeFile(path.join(targetDir, '.gitignore'), `/${mod}\n${mod}.exe\n.env\n`);
 
   logger.dim(`  › Wrote go.mod + main.go + internal/{routes,handlers,middleware,services,repository,models,config} by hand (${template.label} has no official project scaffolder).`);
+
+  if (options.hotReload) {
+    await writeGoAirConfig(targetDir, mod, warnings);
+  }
 
   const goFound = await checkToolchain('go', ['version']);
   if (!goFound) {
