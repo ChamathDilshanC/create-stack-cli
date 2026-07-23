@@ -1,3 +1,10 @@
+## [3.8.7](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.6...v3.8.7) (2026-07-23)
+
+
+### Bug Fixes
+
+* Add interactive preset shortcut and defaults reuse ([d874b91](https://github.com/ChamathDilshanC/create-stack-cli/commit/d874b916ac5d7a200e7d9612d357dc54ee44e9ea))
+
 ## [3.8.6](https://github.com/ChamathDilshanC/create-stack-cli/compare/v3.8.5...v3.8.6) (2026-07-23)
 
 
